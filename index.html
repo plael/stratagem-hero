@@ -87,22 +87,12 @@ const pick = a => a[(Math.random() * a.length) | 0];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* ---------------- 무기 분류 ---------------- */
-const WEAPON = {
-  'w-mg': 'gun', 'w-stalwart': 'gun', 'w-hmg': 'gun', 'w-maxigun': 'gun', 'w-bullet': 'gun',
-  'w-amr': 'snipe', 'w-apex': 'snipe', 'w-ac': 'cannon',
-  'w-eat': 'rocket', 'w-rr': 'rocket', 'w-spear': 'rocket', 'w-commando': 'rocket', 'w-airburst': 'rocket',
-  'w-wasp': 'rocket', 'w-napalm': 'rocket', 'w-leveller': 'rocket', 'w-silo': 'rocket',
-  'w-gl': 'grenade', 'w-beltgl': 'grenade', 'w-deesc': 'grenade',
-  'w-lascannon': 'beam', 'w-quasar': 'beam', 'w-nova': 'beam', 'w-railgun': 'rail',
-  'w-epoch': 'plasma', 'w-melta': 'plasma', 'w-flamer': 'flame', 'w-cremator': 'flame',
-  'w-sterilizer': 'gas', 'w-arc': 'arc', 'w-speargun': 'harpoon', 'w-flag': 'throw',
-  'w-hammer': 'melee', 'w-defol': 'melee'
-};
 function killKind(s) {
   const k = s.k;
   if (k.startsWith('o-')) return 'orbital';
   if (k.startsWith('e-')) return 'eagle';
   if (k.startsWith('w-')) return 'weapon';
+  if (k.startsWith('v-')) return 'vehicle';
   return 'pod';
 }
 
@@ -245,45 +235,193 @@ function makeBg(fac) {
 }
 
 /* ---------------- 소리 ---------------- */
-let AC = null;
-function audio() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } } if (AC && AC.state === 'suspended') AC.resume(); return AC; }
-function tone(f, d, type = 'square', v = 0.05, f2 = 0) {
-  const a = audio(); if (!a) return;
-  const o = a.createOscillator(), g = a.createGain(), t = a.currentTime;
-  o.type = type; o.frequency.setValueAtTime(f, t); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
-  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-  o.connect(g).connect(a.destination); o.start(t); o.stop(t + d + 0.02);
+// 모든 소리는 여기서 합성해요 (파일 없이). 마스터 → 압축기 → 스피커
+let AC = null, MASTER = null, DIST = null, NBUF = null;
+function audio() {
+  if (!AC) {
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 5; comp.attack.value = 0.002; comp.release.value = 0.2;
+      MASTER = AC.createGain(); MASTER.gain.value = 0.85;
+      MASTER.connect(comp); comp.connect(AC.destination);
+      DIST = AC.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 3.2); }
+      DIST.curve = curve; DIST.connect(MASTER);
+      const n = AC.sampleRate * 2; NBUF = AC.createBuffer(1, n, AC.sampleRate);
+      const d = NBUF.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
 }
-function noise(d, v = 0.2, cut = 900) {
-  const a = audio(); if (!a) return;
-  const n = Math.floor(a.sampleRate * d), b = a.createBuffer(1, n, a.sampleRate), ch = b.getChannelData(0);
-  for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
-  const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
-  s.buffer = b; f.type = 'lowpass'; f.frequency.value = cut; g.gain.value = v;
-  s.connect(f).connect(g).connect(a.destination); s.start();
+function env(g, t, v, a, d) {
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, v), t + a);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + d);
 }
+function wobble(a, param, t, d, rate, depth) {
+  const l = a.createOscillator(), lg = a.createGain();
+  l.type = 'square'; l.frequency.value = rate; lg.gain.value = depth;
+  l.connect(lg).connect(param); l.start(t); l.stop(t + d + 0.05);
+}
+// 톤: f→f2, d초, 파형, 크기, at초 뒤, dist=찌그러짐, am=[속도, 깊이] 떨림
+function osc(o) {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime + (o.at || 0), d = o.d;
+  const s = a.createOscillator(), g = a.createGain();
+  s.type = o.type || 'sine';
+  s.frequency.setValueAtTime(o.f, t);
+  if (o.f2) s.frequency.exponentialRampToValueAtTime(Math.max(1, o.f2), t + (o.fd || d));
+  env(g, t, o.v, o.a || 0.003, d);
+  if (o.am) wobble(a, g.gain, t, d, o.am[0], o.v * o.am[1]);
+  s.connect(g).connect(o.dist ? DIST : MASTER);
+  s.start(t); s.stop(t + d + 0.05);
+}
+// 잡음: 필터 종류·주파수 f→f2, q, d초, 크기
+function nz(o) {
+  const a = audio(); if (!a) return;
+  const t = a.currentTime + (o.at || 0), d = o.d;
+  const s = a.createBufferSource(); s.buffer = NBUF; s.loop = true;
+  const f = a.createBiquadFilter(); f.type = o.type || 'lowpass'; f.Q.value = o.q || 0.7;
+  f.frequency.setValueAtTime(o.f || 1000, t);
+  if (o.f2) f.frequency.exponentialRampToValueAtTime(o.f2, t + (o.fd || d));
+  const g = a.createGain(); env(g, t, o.v, o.a || 0.002, d);
+  if (o.am) wobble(a, g.gain, t, d, o.am[0], o.v * o.am[1]);
+  s.connect(f).connect(g).connect(o.dist ? DIST : MASTER);
+  s.start(t, Math.random() * 1.5); s.stop(t + d + 0.05);
+}
+// 자주 쓰는 소리 조각
+const S = {
+  crack: (v = 0.3, f = 3500, d = 0.05, at = 0) => nz({ type: 'bandpass', f, q: 0.9, d, v: Math.min(1, v * 2.3), at }),
+  body: (f = 140, v = 0.3, d = 0.12, at = 0) => osc({ f, f2: f * 0.4, d, v, at, type: 'sine' }),
+  tail: (v = 0.12, f = 900, d = 0.3, at = 0) => nz({ type: 'lowpass', f, f2: f * 0.3, d, v, at, a: 0.01 }),
+  click: (f = 2400, v = 0.08, at = 0) => osc({ f, d: 0.025, v, at, type: 'square' }),
+  whoosh: (d = 0.35, v = 0.15, f = 700, f2 = 2600, at = 0) => nz({ type: 'bandpass', f, f2, q: 1.4, d, v, at, a: 0.03 })
+};
+// 지원무기마다 다른 총소리 (어떤 무기가 내려왔는지 귀로 알 수 있게)
+const GUN = {
+  mg: () => { S.crack(0.36, 2600, 0.06); S.body(150, 0.5, 0.08); },
+  stalwart: () => { S.crack(0.26, 4200, 0.035); S.body(240, 0.28, 0.04); },
+  hmg: () => { S.crack(0.4, 1500, 0.1); osc({ f: 95, f2: 40, d: 0.16, v: 0.5, dist: true }); S.tail(0.1, 700, 0.18); },
+  maxi: () => { S.crack(0.2, 3200, 0.03); osc({ f: 180, f2: 120, d: 0.03, v: 0.16, type: 'square' }); },
+  bullet: () => { S.crack(0.26, 1900, 0.05); osc({ f: 210, f2: 90, d: 0.06, v: 0.14, type: 'sawtooth', dist: true }); },
+  amr: () => { nz({ type: 'highpass', f: 1800, d: 0.04, v: 0.5 }); osc({ f: 120, f2: 35, d: 0.4, v: 0.6, dist: true }); S.tail(0.22, 1400, 0.7); S.crack(0.08, 2000, 0.25, 0.22); },
+  apex: () => { nz({ type: 'highpass', f: 2600, d: 0.03, v: 0.45 }); osc({ f: 160, f2: 50, d: 0.3, v: 0.5, dist: true }); S.tail(0.18, 1800, 0.5); S.click(1800, 0.07, 0.35); S.click(1300, 0.07, 0.45); },
+  ac: () => { osc({ f: 170, f2: 48, d: 0.22, v: 0.55, dist: true }); S.crack(0.28, 1200, 0.08); S.tail(0.14, 600, 0.3); S.click(900, 0.04, 0.08); },
+  eat: () => { nz({ type: 'lowpass', f: 900, d: 0.18, v: 0.9 }); osc({ f: 120, f2: 40, d: 0.2, v: 0.45, dist: true }); S.whoosh(0.4, 0.35, 600, 2800, 0.02); },
+  rr: () => { nz({ type: 'lowpass', f: 600, f2: 120, d: 0.5, v: 0.6, dist: true }); osc({ f: 80, f2: 30, d: 0.35, v: 0.5 }); S.whoosh(0.4, 0.18, 800, 3000, 0.04); },
+  spearLock: () => { for (let i = 0; i < 3; i++) osc({ f: 1200 + i * 300, d: 0.06, v: 0.06, type: 'square', at: i * 0.11 }); osc({ f: 2100, d: 0.18, v: 0.07, type: 'square', at: 0.34 }); },
+  spear: () => { nz({ type: 'lowpass', f: 1000, d: 0.15, v: 0.8 }); osc({ f: 110, f2: 45, d: 0.18, v: 0.35 }); S.whoosh(0.7, 0.32, 500, 3200, 0.03); },
+  commando: () => { nz({ type: 'lowpass', f: 1200, d: 0.1, v: 0.75 }); S.whoosh(0.3, 0.3, 900, 2400, 0.01); },
+  airburst: () => { nz({ type: 'lowpass', f: 700, d: 0.16, v: 0.85 }); S.whoosh(0.35, 0.3, 700, 2200, 0.02); },
+  wasp: () => { nz({ type: 'bandpass', f: 2400, q: 2, d: 0.12, v: 0.5 }); osc({ f: 900, f2: 2400, d: 0.12, v: 0.04, type: 'sawtooth' }); },
+  leveller: () => { nz({ type: 'lowpass', f: 500, d: 0.35, v: 0.6, dist: true }); S.whoosh(0.35, 0.2, 500, 2000, 0.03); },
+  siloAlarm: () => { for (let i = 0; i < 2; i++) osc({ f: 880, f2: 440, d: 0.22, v: 0.07, type: 'square', at: i * 0.25 }); },
+  silo: () => { nz({ type: 'lowpass', f: 400, f2: 900, d: 1.0, v: 0.55, a: 0.05, dist: true }); osc({ f: 60, f2: 110, d: 0.9, v: 0.35, type: 'sawtooth' }); },
+  gl: () => { osc({ f: 320, f2: 110, d: 0.09, v: 0.65 }); nz({ type: 'bandpass', f: 600, d: 0.07, v: 0.7 }); },
+  beltgl: () => { osc({ f: 280, f2: 100, d: 0.08, v: 0.6 }); nz({ type: 'bandpass', f: 500, d: 0.06, v: 0.6 }); S.click(1500, 0.04, 0.05); },
+  deesc: () => { osc({ f: 240, f2: 90, d: 0.11, v: 0.4 }); osc({ f: 1800, f2: 600, d: 0.15, v: 0.05, type: 'square', at: 0.02 }); },
+  stun: () => { for (let i = 0; i < 6; i++) osc({ f: 600 + Math.random() * 1600, d: 0.04, v: 0.06, type: 'square', at: i * 0.035 }); nz({ type: 'highpass', f: 3000, d: 0.3, v: 0.12 }); },
+  lasBeam: () => { osc({ f: 110, d: 0.6, v: 0.18, type: 'sawtooth', am: [32, 0.4] }); osc({ f: 221, d: 0.6, v: 0.1, type: 'square' }); nz({ type: 'highpass', f: 4000, d: 0.6, v: 0.1 }); },
+  quasarCharge: () => { osc({ f: 180, f2: 1900, d: 0.6, v: 0.08, type: 'sawtooth', a: 0.05 }); osc({ f: 90, f2: 950, d: 0.6, v: 0.08, type: 'sine', a: 0.05 }); },
+  quasar: () => { osc({ f: 1400, f2: 120, d: 0.3, v: 0.25, type: 'sawtooth', dist: true }); osc({ f: 70, f2: 30, d: 0.4, v: 0.5 }); },
+  nova: () => { osc({ f: 2200, f2: 700, d: 0.09, v: 0.12, type: 'square' }); osc({ f: 440, f2: 220, d: 0.09, v: 0.1, type: 'sawtooth' }); },
+  railCharge: () => { osc({ f: 300, f2: 1500, d: 0.45, v: 0.06, type: 'sine', a: 0.04, am: [24, 0.5] }); },
+  rail: () => { nz({ type: 'highpass', f: 1200, d: 0.08, v: 0.6 }); osc({ f: 3000, f2: 200, d: 0.25, v: 0.12, type: 'sawtooth' }); osc({ f: 90, f2: 30, d: 0.35, v: 0.5, dist: true }); S.tail(0.15, 3000, 0.6); },
+  epochCharge: () => { osc({ f: 120, f2: 700, d: 0.5, v: 0.1, type: 'triangle', a: 0.05, am: [18, 0.6] }); nz({ type: 'bandpass', f: 1500, f2: 4000, q: 3, d: 0.5, v: 0.05 }); },
+  epoch: () => { osc({ f: 600, f2: 90, d: 0.25, v: 0.3, type: 'triangle', dist: true }); nz({ type: 'bandpass', f: 1800, d: 0.15, v: 0.2 }); },
+  melta: () => { nz({ type: 'lowpass', f: 300, f2: 1800, d: 0.35, v: 0.5, a: 0.02, dist: true }); nz({ type: 'highpass', f: 5000, d: 0.45, v: 0.12 }); osc({ f: 55, d: 0.35, v: 0.3, type: 'sawtooth' }); },
+  flamer: () => { nz({ type: 'lowpass', f: 900, d: 0.7, v: 0.42, a: 0.04, am: [17, 0.35] }); S.click(3000, 0.05); nz({ type: 'highpass', f: 3500, d: 0.6, v: 0.05 }); },
+  cremator: () => { nz({ type: 'lowpass', f: 520, d: 0.9, v: 0.55, a: 0.05, am: [11, 0.4], dist: true }); osc({ f: 48, d: 0.8, v: 0.25, type: 'sawtooth' }); },
+  steril: () => { nz({ type: 'highpass', f: 2600, d: 0.7, v: 0.2, a: 0.04 }); nz({ type: 'bandpass', f: 5200, q: 3, d: 0.7, v: 0.08, am: [9, 0.4] }); },
+  arc: () => { for (let i = 0; i < 7; i++) osc({ f: 200 + Math.random() * 2600, d: 0.03, v: 0.09, type: 'square', at: i * 0.022 }); nz({ type: 'highpass', f: 2500, d: 0.18, v: 0.3 }); osc({ f: 60, f2: 40, d: 0.2, v: 0.25, type: 'sawtooth' }); },
+  speargun: () => { osc({ f: 700, f2: 180, d: 0.18, v: 0.18, type: 'triangle' }); nz({ type: 'bandpass', f: 1200, d: 0.08, v: 0.25 }); },
+  flag: () => { const n = [392, 523, 659, 784]; n.forEach((f, i) => osc({ f, d: i === 3 ? 0.4 : 0.14, v: 0.07, type: 'triangle', at: i * 0.11 })); S.whoosh(0.25, 0.12, 400, 1800, 0.45); },
+  hammer: () => { osc({ f: 120, f2: 40, d: 0.35, v: 0.6, dist: true }); [331, 497, 742].forEach(f => osc({ f, d: 0.5, v: 0.08, type: 'triangle' })); nz({ type: 'lowpass', f: 2000, f2: 300, d: 0.2, v: 0.5 }); },
+  defolRev: () => { osc({ f: 70, f2: 150, d: 0.5, v: 0.14, type: 'sawtooth', am: [38, 0.5], dist: true }); },
+  defol: () => { osc({ f: 150, d: 0.35, v: 0.16, type: 'sawtooth', am: [45, 0.6], dist: true }); nz({ type: 'bandpass', f: 1800, q: 2, d: 0.35, v: 0.2, am: [30, 0.5] }); },
+  // 탈것 소리
+  exoStep: () => { osc({ f: 90, f2: 40, d: 0.14, v: 0.35 }); S.click(600, 0.05); nz({ type: 'highpass', f: 5000, d: 0.12, v: 0.04, at: 0.03 }); },
+  spin: (d = 0.3) => osc({ f: 150, f2: 1100, d, v: 0.07, type: 'sawtooth', a: 0.04 }),
+  minigun: () => { S.crack(0.2, 2800, 0.03); osc({ f: 130, f2: 80, d: 0.035, v: 0.14, type: 'square' }); },
+  rocketPod: () => { nz({ type: 'lowpass', f: 1100, d: 0.12, v: 0.8 }); S.whoosh(0.3, 0.3, 900, 2600, 0.02); },
+  atCannon: () => { osc({ f: 110, f2: 30, d: 0.5, v: 0.7, dist: true }); S.crack(0.6, 1600, 0.1); S.tail(0.25, 1200, 0.8); },
+  flak: () => { osc({ f: 160, f2: 50, d: 0.3, v: 0.55, dist: true }); S.crack(0.35, 1100, 0.1); },
+  flakPop: () => { nz({ type: 'bandpass', f: 1600, d: 0.25, v: 0.35 }); for (let i = 0; i < 5; i++) S.click(1500 + Math.random() * 2000, 0.05, 0.04 + i * 0.03); },
+  shieldBash: () => { osc({ f: 85, f2: 30, d: 0.45, v: 0.7, dist: true }); [220, 347, 523, 811].forEach(f => osc({ f, d: 0.7, v: 0.07, type: 'triangle' })); nz({ type: 'lowpass', f: 3000, f2: 200, d: 0.25, v: 0.6 }); },
+  engine: (d = 0.6, up = 1) => osc({ f: 55 * up, f2: 140 * up, d, v: 0.16, type: 'sawtooth', am: [28, 0.4], a: 0.04, dist: true }),
+  screech: () => nz({ type: 'bandpass', f: 3200, f2: 2200, q: 6, d: 0.45, v: 0.18 }),
+  crunch: () => { osc({ f: 100, f2: 35, d: 0.35, v: 0.6, dist: true }); nz({ type: 'lowpass', f: 2600, f2: 400, d: 0.3, v: 0.5 }); for (let i = 0; i < 6; i++) S.click(800 + Math.random() * 2500, 0.06, 0.03 + i * 0.04); },
+  tankGun: () => { osc({ f: 75, f2: 22, d: 0.9, v: 0.9, dist: true }); nz({ type: 'highpass', f: 900, d: 0.06, v: 0.8 }); S.tail(0.4, 1500, 1.4); S.crack(0.14, 1100, 0.6, 0.35); },
+  coax: () => { S.crack(0.22, 2200, 0.05); S.body(170, 0.18, 0.06); },
+  gatlingTwin: () => { S.crack(0.18, 2500, 0.028); osc({ f: 160, f2: 110, d: 0.03, v: 0.12, type: 'square' }); },
+  silo2: () => { nz({ type: 'lowpass', f: 600, f2: 1400, d: 0.5, v: 0.45, a: 0.02 }); S.whoosh(0.6, 0.16, 400, 2600, 0.05); },
+  hatch: () => { S.click(700, 0.08); nz({ type: 'highpass', f: 3000, d: 0.25, v: 0.08, at: 0.02 }); },
+  hiss: () => nz({ type: 'highpass', f: 4200, d: 0.45, v: 0.09, a: 0.02 }),
+  crate: () => { osc({ f: 260, f2: 120, d: 0.08, v: 0.15, type: 'triangle' }); S.click(1200, 0.05, 0.02); }
+};
 const sfx = {
-  key: () => tone(880, 0.05, 'square', 0.035),
-  bad: () => tone(140, 0.22, 'sawtooth', 0.06, 70),
-  ok: () => { tone(660, 0.07, 'square', 0.04); setTimeout(() => tone(990, 0.1, 'square', 0.04), 60); },
-  boom: s => noise(0.35 + s * 0.03, Math.min(0.5, 0.12 + s * 0.015), 500 + s * 30),
-  shot: () => noise(0.06, 0.12, 2500),
-  zap: () => tone(1400, 0.15, 'sawtooth', 0.03, 300),
-  jet: () => tone(220, 0.9, 'sawtooth', 0.02, 90),
-  whistle: () => tone(1600, 0.45, 'sine', 0.03, 300),
-  thud: () => { noise(0.18, 0.3, 300); tone(70, 0.2, 'sine', 0.12, 40); },
-  die: () => tone(300, 0.7, 'triangle', 0.06, 60)
+  key: () => osc({ f: 1180, d: 0.035, v: 0.045, type: 'square' }),
+  bad: () => { osc({ f: 150, f2: 75, d: 0.22, v: 0.09, type: 'sawtooth' }); osc({ f: 156, f2: 78, d: 0.22, v: 0.07, type: 'square' }); },
+  ok: () => { osc({ f: 740, d: 0.06, v: 0.05, type: 'square' }); osc({ f: 1110, d: 0.08, v: 0.045, type: 'square', at: 0.055 }); },
+  // 폭발: 크기 s에 따라 저음·파열음·잔향
+  boom: s => {
+    osc({ f: Math.max(45, 95 - s), f2: 26, d: 0.35 + s * 0.035, v: Math.min(0.85, 0.3 + s * 0.025), dist: true });
+    S.crack(Math.min(0.6, 0.2 + s * 0.02), 1800, 0.08);
+    nz({ type: 'lowpass', f: 900 + s * 40, f2: 90, d: 0.45 + s * 0.05, v: Math.min(0.6, 0.18 + s * 0.022), a: 0.004 });
+    if (s >= 12) S.tail(0.16, 500, 1.1, 0.05);
+  },
+  shot: () => GUN.mg(),
+  eagleGun: () => { S.crack(0.22, 2000, 0.04); osc({ f: 120, f2: 60, d: 0.05, v: 0.2, dist: true }); },
+  zap: () => osc({ f: 1400, f2: 300, d: 0.15, v: 0.06, type: 'sawtooth' }),
+  jet: () => { nz({ type: 'bandpass', f: 500, f2: 2200, q: 1.2, d: 0.5, v: 0.22, a: 0.25, fd: 0.45 }); nz({ type: 'bandpass', f: 2200, f2: 400, q: 1.2, d: 0.9, v: 0.2, at: 0.4 }); osc({ f: 240, f2: 110, d: 1.1, v: 0.04, type: 'sawtooth' }); },
+  whistle: () => { osc({ f: 1700, f2: 280, d: 0.48, v: 0.06 }); nz({ type: 'bandpass', f: 3000, f2: 600, q: 4, d: 0.48, v: 0.07 }); },
+  // 헬포드 낙하: 대기권을 찢는 소리
+  podFall: (d = 0.3) => { nz({ type: 'bandpass', f: 4200, f2: 500, q: 1.3, d: d + 0.04, v: 0.26, a: 0.05, fd: d }); osc({ f: 2200, f2: 380, d, v: 0.045, type: 'sine', a: 0.04 }); },
+  // 헬포드 착지: 쾅! (저음 충격 + 파열 + 금속 울림 + 흙 튀는 소리 + 문 열리는 김빠짐)
+  slam: (big = 1) => {
+    osc({ f: 120, f2: 28, d: 0.6 * big, v: 0.9, dist: true });
+    nz({ type: 'lowpass', f: 7000, f2: 500, d: 0.16, v: 0.75, a: 0.001 });
+    nz({ type: 'bandpass', f: 240, q: 0.8, d: 0.4, v: 0.7 });
+    nz({ type: 'lowpass', f: 600, f2: 70, d: 1.4 * big, v: 0.3, a: 0.02 });
+    [233, 349, 523].forEach((f, i) => osc({ f, d: 0.45 - i * 0.08, v: 0.06, type: 'triangle', at: 0.005 }));
+    for (let i = 0; i < 7; i++) nz({ type: 'highpass', f: 2500 + Math.random() * 3000, d: 0.025, v: 0.1 + Math.random() * 0.08, at: 0.1 + Math.random() * 0.5 });
+    nz({ type: 'highpass', f: 4500, d: 0.55, v: 0.08, at: 0.35, a: 0.03 });
+  },
+  thrust: (d = 0.5) => nz({ type: 'lowpass', f: 380, f2: 900, d, v: 0.4, a: 0.06, am: [21, 0.25] }),
+  die: () => { osc({ f: 300, f2: 55, d: 0.8, v: 0.12, type: 'triangle' }); osc({ f: 80, f2: 30, d: 0.5, v: 0.5, dist: true }); nz({ type: 'lowpass', f: 1500, f2: 200, d: 0.4, v: 0.4 }); }
 };
 
 /* ---------------- 입자 ---------------- */
 const parts = [];
 const scorch = [];
-let shake = 0, flashW = 0;
+
+/* ---------------- 타격감: 역경직 · 화면 흔들림 · 번쩍임 ---------------- */
+let trauma = 0, kickX = 0, kickY = 0, flashA = 0, flashC = '#ffffff', hitstop = 0, lastStop = 0, lastFlash = 0;
+function addShake(a, kx = 0, ky = 0) { trauma = Math.min(1, trauma + a); kickX += kx; kickY += ky; }
+function stopFor(t, force) {
+  const now = performance.now();
+  if (!force && t < 0.04 && now - lastStop < 90) return;   // 작은 역경직은 너무 자주 걸지 않음
+  hitstop = Math.max(hitstop, t); lastStop = now;
+}
+function flash(a, c = '#ffffff') {
+  const now = performance.now();
+  if (now - lastFlash < 330 && a <= flashA + 0.3) return;   // 1초에 3번 넘게 번쩍이지 않게
+  if (a > flashA) { flashA = a; flashC = c; lastFlash = now; }
+}
+// 세기 1 작은 타격 / 2 처치·중간 폭발 / 3 큰 한 방
+function impact(level, sh = 0) {
+  if (level >= 3) { stopFor(0.12, true); addShake(0.55 + sh, 0, 3); flash(0.7); }
+  else if (level >= 2) { stopFor(0.055); addShake(0.25 + sh, 0, 1); flash(0.2, '#fff4d0'); }
+  else { stopFor(0.018); addShake(0.035 + sh); }
+}
 function P(o) { parts.push(Object.assign({ x: 0, y: 0, vx: 0, vy: 0, g: 0, life: 0, max: 1, r: 1, kind: 'fire', drag: 0, col: '#fff' }, o)); }
 
 function boom(x, y, s, opt = {}) {
   sfx.boom(s);
-  shake = Math.max(shake, s * 0.35);
+  if (!opt.quiet) impact(s >= 16 ? 3 : s >= 9 ? 2 : 1, s * 0.012);
   P({ x, y, kind: 'flash', max: 0.08, r: s * 1.1 });
   const fireN = Math.round(s * 0.9);
   for (let i = 0; i < fireN; i++) {
@@ -318,7 +456,10 @@ function updateParts(dt) {
     if (p.life >= p.max) { parts.splice(i, 1); continue; }
     if (p.drag) { const k = Math.max(0, 1 - p.drag * dt); p.vx *= k; p.vy *= k; }
     p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
-    if (p.g && p.y > GROUND + 3) { p.y = GROUND + 3; p.vy *= -0.3; p.vx *= 0.6; }
+    if (p.kind === 'corpse') {
+      const fl = GROUND - p.rows.length + 2;
+      if (p.y > fl) { p.y = fl; if (p.vy > 60) sparks(p.x + 6, GROUND - 2, 6, ['#56402c', '#7e7874']); p.vy *= -0.35; p.vx *= 0.55; }
+    } else if (p.g && p.y > GROUND + 3) { p.y = GROUND + 3; p.vy *= -0.3; p.vx *= 0.6; }
     if (p.grow) p.r += p.grow * dt;
   }
 }
@@ -334,6 +475,9 @@ function drawParts(pass) {
       else if (p.kind === 'ring') { ctx.fillStyle = f < 0.5 ? '#c4ccd6' : '#7e7874'; for (let a = 0; a < 6.283; a += 0.05) ctx.fillRect(Math.round(p.x + Math.cos(a) * p.r), Math.round(p.y + Math.sin(a) * p.r * 0.22), 1, 1); }
     } else {
       if (p.kind === 'debris') rect(p.x, p.y, 1, 1, p.col);
+      else if (p.kind === 'corpse') { if (f > 0.75) ctx.globalAlpha = (1 - f) / 0.25; sprite(p.rows, p.x, p.y, p.map, ((p.life * 12) | 0) % 2 === 1); ctx.globalAlpha = 1; }
+      else if (p.kind === 'shell') { rect(p.x, p.y, 2, 1, '#ffd630'); }
+      else if (p.kind === 'crate') { rect(p.x, p.y - 4, 5, 5, '#3a4a5a'); rect(p.x, p.y - 4, 5, 1, '#5ac4ff'); rect(p.x + 2, p.y - 2, 1, 2, '#5ac4ff'); }
       else if (p.kind === 'flash') { circ(p.x, p.y, p.r, '#ffffff'); }
       else if (p.kind === 'tracer') { line(p.x, p.y, p.x - p.vx * 0.02, p.y - p.vy * 0.02, p.col); }
     }
@@ -344,7 +488,7 @@ function drawParts(pass) {
 const G = {
   state: 'title', round: 0, score: 0, best: 0, list: [], idx: 0, prog: 0, perfect: true,
   kills: 0, miss: 0, faction: 'bug', throwT: 0, enemy: null, targets: [], fx: [], badFlash: 0, armed: null, lunge: 0,
-  clearAt: 0, overAt: 0, time: 0, bonus: null, dead: false, lastKill: ''
+  clearAt: 0, overAt: 0, time: 0, bonus: null, dead: false, lastKill: '', recoil: 0, raise: 0
 };
 try { G.best = +localStorage.getItem('setac-hero-best') || 0; } catch (e) { G.best = 0; }
 
@@ -389,7 +533,7 @@ function press(d) {
     G.prog++; G.score += 5; sfx.key();
     if (G.prog >= s.c.length) success(s);
   } else {
-    G.prog = 0; G.perfect = false; G.miss++; G.badFlash = 0.35; shake = Math.max(shake, 2); sfx.bad();
+    G.prog = 0; G.perfect = false; G.miss++; G.badFlash = 0.35; addShake(0.18, rand(-2, 2), 0); sfx.bad();
   }
   hud();
 }
@@ -407,12 +551,24 @@ function success(s) {
   spawnEnemy();
 }
 
-function killTarget(e, how) {
+// 맞음: 하얗게 깜빡 + 뒤로 밀림 + 세기만큼 역경직
+function hitEnemy(e, lv = 1, kb = 2) {
+  if (!e || e.dead) return;
+  e.flash = lv >= 2 ? 0.1 : 0.06; e.kx = Math.min(30, (e.kx || 0) + kb);
+  impact(lv);
+}
+function killTarget(e, how, lv = 2) {
   if (e.dead) return;
   e.dead = true;
-  const x = enemyX(e) + FACTIONS[e.fac].w / 2, cols = FACTIONS[e.fac].gore;
+  impact(lv);
+  const F = FACTIONS[e.fac];
+  const x = enemyX(e) + (e.kx || 0) + F.w / 2, cols = F.gore;
   for (let i = 0; i < 26; i++) { const a = -Math.PI * Math.random(), v = rand(30, 120); P({ x, y: GROUND - 6, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 300, kind: 'debris', max: 0.9 + Math.random() * 0.6, col: pick(cols) }); }
   if (how === 'burn') flames(x, GROUND - 2, 6, 0.5);
+  if (how === 'fling') {   // 날아가는 몸뚱이
+    const rows = F.f[0];
+    P({ x: x - F.w / 2, y: GROUND - rows.length, vx: rand(150, 210), vy: -rand(130, 170), g: 420, kind: 'corpse', max: 1.1, rows, map: F.map });
+  }
 }
 
 /* ---------------- 처치 연출 ---------------- */
@@ -422,7 +578,8 @@ function launch(s, e) {
   if (kind !== 'weapon') G.throwT = 0.3;
   if (kind === 'orbital') G.fx.push(orbitalFx(s.k, e, tx));
   else if (kind === 'eagle') G.fx.push(eagleFx(s.k, e, tx));
-  else if (kind === 'weapon') G.fx.push(weaponFx(WEAPON[s.k] || 'gun', e, tx));
+  else if (kind === 'weapon') G.fx.push(weaponFx(s.k, e, tx));
+  else if (kind === 'vehicle') G.fx.push(vehicleFx(s.k, e, tx));
   else G.fx.push(podFx(e, tx));
 }
 
@@ -460,7 +617,7 @@ function orbitalFx(k, e, tx) {
       if (!sh.hit && fx.t >= sh.t) {
         sh.hit = true;
         if (mode === 'single') boom(sh.x, GROUND - 5, 20);
-        else if (mode === 'rail') { boom(sh.x, GROUND - 5, 16); flashW = 0.25; }
+        else if (mode === 'rail') { boom(sh.x, GROUND - 5, 16); flash(0.7, '#bed2ff'); }
         else if (mode === 'barrage') { if (k === 'o-napalm') { boom(sh.x, GROUND - 3, 8); flames(sh.x, GROUND - 1, 10, 1.2); } else boom(sh.x, GROUND - 4, big); }
         else if (mode === 'airburst') { boom(sh.x, GROUND - 40, 9, { noSmoke: true }); for (let i = 0; i < 20; i++) P({ x: sh.x, y: GROUND - 40, vx: rand(-90, 90), vy: rand(40, 160), kind: 'tracer', max: 0.4, col: '#ffd630' }); }
         else if (mode === 'gas') { boom(sh.x, GROUND - 4, 6, { noSmoke: true }); cloud(sh.x, GROUND - 6, 16, ['#78be3c', '#b4e66e', '#5a9a2a']); }
@@ -520,8 +677,8 @@ function eagleFx(k, e, tx) {
       if (mode === 'strafe' && jet.x > tx - 80 && jet.x < tx + 10 && Math.random() < 0.8) {
         const gx = jet.x + 50 + rand(-4, 4);
         P({ x: jet.x + 14, y: jet.y + 5, vx: (gx - jet.x - 14) / 0.12, vy: (GROUND - jet.y - 5) / 0.12, kind: 'tracer', max: 0.12, col: '#ffd630' });
-        if (Math.random() < 0.3) { sparks(gx, GROUND - 1, 3, ['#ffd630', '#ff8c1e']); sfx.shot(); }
-        if (Math.abs(gx - tx) < 6) killTarget(e, 'boom');
+        if (Math.random() < 0.3) { sparks(gx, GROUND - 1, 3, ['#ffd630', '#ff8c1e']); sfx.eagleGun(); }
+        if (Math.abs(gx - tx) < 6) killTarget(e, 'boom', 2);
       }
       if (mode === 'rocket' && released < 2 && jet.x > tx - 120) {
         drops.push({ x: jet.x + 12, y: jet.y + 6, vx: (tx + released * 6 - jet.x - 12) / 0.35, vy: (GROUND - 4 - jet.y - 6) / 0.35, rocket: true, done: false, t: 0 });
@@ -552,98 +709,560 @@ function eagleFx(k, e, tx) {
   return fx;
 }
 
-function weaponFx(cls, e, tx) {
-  const fx = { t: 0, end: 1.6 };
-  const podX = PX + 18;
-  let landed = false, fired = 0, done = false;
-  const mx = PX + 12, my = GROUND - 13;
-  const shots = [];
+/* ---------------- 지원무기: 무기마다 쏘는 방식·소리가 달라요 ---------------- */
+const WP = {
+  'w-mg':        { c: 'gun', n: 10, r: 0.075, snd: 'mg', tr: '#ffd630' },
+  'w-stalwart':  { c: 'gun', n: 15, r: 0.05, snd: 'stalwart', tr: '#fff096' },
+  'w-hmg':       { c: 'gun', n: 6, r: 0.15, snd: 'hmg', tr: '#ff8c1e', big: true },
+  'w-maxigun':   { c: 'gun', n: 26, r: 0.026, snd: 'maxi', tr: '#ffd630', spin: 0.35 },
+  'w-bullet':    { c: 'gun', n: 12, r: 0.065, snd: 'bullet', tr: '#ffb020' },
+  'w-amr':       { c: 'snipe', snd: 'amr' },
+  'w-apex':      { c: 'snipe', snd: 'apex', heavy: true },
+  'w-ac':        { c: 'cannon', n: 4, r: 0.2, snd: 'ac' },
+  'w-eat':       { c: 'rocket', snd: 'eat', size: 12 },
+  'w-rr':        { c: 'rocket', snd: 'rr', size: 14, back: true },
+  'w-spear':     { c: 'rocket', snd: 'spear', size: 14, path: 'top', lock: 'spearLock' },
+  'w-commando':  { c: 'rocket', snd: 'commando', size: 9, n: 2, laser: true },
+  'w-airburst':  { c: 'rocket', snd: 'airburst', size: 8, path: 'air' },
+  'w-wasp':      { c: 'rocket', snd: 'wasp', size: 6, n: 5, path: 'swarm' },
+  'w-napalm':    { c: 'rocket', snd: 'eat', size: 8, napalm: true },
+  'w-leveller':  { c: 'rocket', snd: 'leveller', size: 17 },
+  'w-silo':      { c: 'silo' },
+  'w-gl':        { c: 'grenade', n: 3, r: 0.25, snd: 'gl', size: 7 },
+  'w-beltgl':    { c: 'grenade', n: 6, r: 0.12, snd: 'beltgl', size: 6 },
+  'w-deesc':     { c: 'grenade', n: 1, r: 0.3, snd: 'deesc', size: 5, stun: true },
+  'w-lascannon': { c: 'beam' },
+  'w-quasar':    { c: 'quasar' },
+  'w-nova':      { c: 'nova' },
+  'w-railgun':   { c: 'rail' },
+  'w-epoch':     { c: 'plasma' },
+  'w-melta':     { c: 'melta' },
+  'w-flamer':    { c: 'flame', dur: 0.55, snd: 'flamer' },
+  'w-cremator':  { c: 'flame', dur: 0.75, snd: 'cremator', big: true },
+  'w-sterilizer':{ c: 'gas', dur: 0.6, snd: 'steril' },
+  'w-arc':       { c: 'arc', n: 2, r: 0.3 },
+  'w-speargun':  { c: 'harpoon' },
+  'w-flag':      { c: 'throw' },
+  'w-hammer':    { c: 'melee' },
+  'w-defol':     { c: 'saw' }
+};
+const SMOKE = ['#5a5656', '#6a6662'];
+function dust(x, n, spread = 8) {
+  for (let i = 0; i < n; i++) P({ x: x + rand(-spread, spread), y: GROUND - 2, vx: rand(-45, 45), vy: -rand(5, 25), drag: 1, kind: 'smoke', max: 0.7 + Math.random() * 0.5, r: rand(2, 4.5) });
+  for (let i = 0; i < n; i++) { const a = -Math.PI * Math.random(), v = rand(40, 110); P({ x, y: GROUND - 3, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: 320, kind: 'debris', max: 1, col: pick(['#56402c', '#3c2d21', '#7e7874']) }); }
+}
+function muzzle(x, y, r = 1.6) { P({ x, y, kind: 'flash', max: 0.045, r }); }
+function tracer(x0, y0, x1, y1, col, t = 0.08) { P({ x: x0, y: y0, vx: (x1 - x0) / t, vy: (y1 - y0) / t, kind: 'tracer', max: t, col }); }
+function casing(x, y) { P({ x, y, vx: rand(-50, -15), vy: -rand(40, 90), g: 420, kind: 'shell', max: 0.6 }); }
+
+// 날아가는 탄: 직선·포물선·위로 솟았다 내리꽂기
+function makeProj(o) {
+  return Object.assign({ t: 0, at: 0, x: o.x0, y: o.y0, arc: 0, hit: false, trail: null }, o);
+}
+function stepProj(p, dt) {
+  if (p.hit) return;
+  if (p.at > 0) { p.at -= dt; return; }
+  p.t += dt;
+  const k = clamp(p.t / p.dur, 0, 1);
+  if (p.path === 'silo') {                 // 수직 발사 → 화면 밖 → 목표 위에서 낙하
+    if (k < 0.55) { const q = k / 0.55; p.x = p.x0; p.y = p.y0 - q * q * (p.y0 + 30); p.down = false; }
+    else { const q = (k - 0.55) / 0.45; p.x = p.x1; p.y = -30 + q * (p.y1 + 30); p.down = true; }
+  } else {
+    p.x = p.x0 + (p.x1 - p.x0) * k;
+    p.y = p.y0 + (p.y1 - p.y0) * k - Math.sin(k * Math.PI) * p.arc;
+  }
+  if (p.trail === 'smoke' && Math.random() < 0.8) P({ x: p.x, y: p.y, kind: 'smoke', max: 0.55, r: 1.3 });
+  if (p.trail === 'fire' && Math.random() < 0.8) P({ x: p.x, y: p.y, kind: 'fire', max: 0.18, r: 1.2 });
+  if (k >= 1) { p.hit = true; p.onHit && p.onHit(p); }
+}
+function drawProj(p) {
+  if (p.hit || p.at > 0) return;
+  const x = p.x, y = p.y;
+  if (p.kind === 'rocket') { rect(x - 3, y, 5, 2, '#c4ccd6'); rect(x - 4, y, 1, 2, '#ff8c1e'); rect(x + 2, y, 1, 2, '#e23e1c'); }
+  else if (p.kind === 'mini') { rect(x - 1, y, 3, 1, '#c4ccd6'); rect(x - 2, y, 1, 1, '#ffd630'); }
+  else if (p.kind === 'missile') { if (p.down) { rect(x - 1, y - 6, 3, 7, '#c4ccd6'); rect(x - 1, y + 1, 3, 1, '#e23e1c'); } else { rect(x - 1, y - 1, 3, 7, '#c4ccd6'); rect(x - 1, y - 2, 3, 1, '#e23e1c'); rect(x, y + 6, 1, 2, '#fff096'); } }
+  else if (p.kind === 'grenade') { rect(x, y, 2, 2, '#525a66'); rect(x, y, 1, 1, '#8a94a0'); }
+  else if (p.kind === 'shellAC') { rect(x - 2, y, 4, 1, '#fff096'); rect(x - 3, y, 1, 1, '#ff8c1e'); }
+  else if (p.kind === 'plasma') { circ(x, y, 2.5, '#5ac4ff'); circ(x, y, 1.5, '#bff0ff'); rect(x, y, 1, 1, '#ffffff'); }
+  else if (p.kind === 'bolt') { rect(x - 6, y - 1, 8, 3, '#5ac4ff'); rect(x - 5, y, 7, 1, '#ffffff'); }
+  else if (p.kind === 'harpoon') { rect(x - 6, y, 7, 1, '#c4ccd6'); rect(x + 1, y - 1, 1, 3, '#8a94a0'); line(x - 6, y, p.x0, p.y0, '#3a3f4c'); }
+  else if (p.kind === 'flag') { rect(x - 7, y, 10, 1, '#c4ccd6'); rect(x - 7, y - 4, 5, 4, '#ffe710'); rect(x - 6, y - 3, 2, 2, '#1c1e26'); }
+}
+
+function weaponFx(key, e, tx) {
+  const w = WP[key] || { c: 'gun', n: 8, r: 0.08, snd: 'mg', tr: '#ffd630' };
+  const fx = { t: 0, ev: [], beams: [], doneAt: 0 };
+  const projs = [];
+  const at = (t, fn) => fx.ev.push({ t, fn });
+  const podX = PX + 18, mx = PX + 12, my = GROUND - 13, ty = GROUND - 7, T0 = 0.6;
+  const gore = FACTIONS[e.fac].gore;
+  let finished = false, tick = null, flagStuck = false;
+  const finish = (how = 'boom', lv = 2) => { if (finished) return; killTarget(e, how, lv); finished = true; fx.doneAt = fx.t; };
+  const hit = (lv = 1, kb = 1) => hitEnemy(e, lv, kb);
+  const recoil = (n = 1) => { G.recoil = Math.max(G.recoil, n); };
+
+  // 헬포드 낙하 → 쾅!
+  sfx.podFall(0.3);
+  at(0.3, () => { sfx.slam(0.8); stopFor(0.08, true); addShake(0.45, 0, 3); flash(0.4); dust(podX, 10); scorch.push({ x: podX, r: 6, life: 0 }); });
+  at(0.45, () => { G.armed = w.c === 'silo' ? 'remote' : w.c; });
+
+  if (w.c === 'gun') {
+    const s0 = T0 + (w.spin || 0);
+    if (w.spin) at(T0, () => GUN.spin(w.spin));
+    for (let i = 0; i < w.n; i++) at(s0 + i * w.r, () => {
+      GUN[w.snd](); recoil(w.big ? 2 : 1); muzzle(mx + 8, my, w.big ? 2.2 : 1.4); casing(mx + 2, my);
+      tracer(mx + 8, my, tx, ty + rand(-3, 3), w.tr, w.big ? 0.09 : 0.07);
+      sparks(tx, ty, w.big ? 5 : 2, gore);
+      if (i === w.n - 1) finish('boom', 2); else hit(1, w.big ? 2.5 : 0.8);
+    });
+  } else if (w.c === 'snipe') {
+    at(T0, () => {
+      GUN[w.snd](); recoil(3); muzzle(mx + 10, my, 3); addShake(0.2, -3, 0);
+      fx.beams.push({ k: 'snipe', t: 0 }); sparks(tx, ty, 14, ['#ffffff', '#fff096', ...gore]);
+      finish('fling', 2); stopFor(w.heavy ? 0.1 : 0.08, true); flash(0.3, '#fff4d0');
+    });
+  } else if (w.c === 'cannon') {
+    for (let i = 0; i < w.n; i++) at(T0 + i * w.r, () => {
+      GUN[w.snd](); recoil(2); muzzle(mx + 10, my, 2.4); casing(mx + 2, my); addShake(0.08, -1, 0);
+      projs.push(makeProj({ kind: 'shellAC', x0: mx + 10, y0: my, x1: tx, y1: ty, dur: 0.08, onHit: () => { boom(tx + rand(-3, 3), GROUND - 6, 6); if (i === w.n - 1) finish('boom', 2); else hit(1, 3); } }));
+    });
+  } else if (w.c === 'rocket') {
+    let L = T0;
+    if (w.lock) { at(T0, () => GUN[w.lock]()); L = T0 + 0.5; }
+    const n = w.n || 1;
+    for (let i = 0; i < n; i++) at(L + i * (w.path === 'swarm' ? 0.07 : 0.28), () => {
+      GUN[w.snd](); recoil(2); muzzle(mx + 10, my - 1, 2);
+      P({ x: mx - 8, y: my, vx: -60, vy: -10, drag: 2, kind: 'smoke', max: 0.6, r: w.back ? 5 : 3 });
+      if (w.back) { cloud(mx - 14, my + 2, 8, SMOKE); addShake(0.2, -2, 0); }
+      const last = i === n - 1;
+      const p = makeProj({ kind: w.path === 'swarm' ? 'mini' : 'rocket', x0: mx + 10, y0: my - 1, x1: tx + (w.path === 'swarm' ? rand(-5, 5) : 0), y1: w.path === 'air' ? GROUND - 30 : GROUND - 5,
+        dur: w.path === 'top' ? 0.8 : w.path === 'swarm' ? rand(0.4, 0.55) : 0.3, arc: w.path === 'top' ? 75 : w.path === 'swarm' ? rand(15, 45) : 0, trail: 'smoke' });
+      p.onHit = () => {
+        if (w.path === 'air') {
+          boom(tx, GROUND - 30, 8, { noSmoke: true }); GUN.flakPop();
+          for (let j = 0; j < 18; j++) P({ x: tx, y: GROUND - 30, vx: rand(-70, 70), vy: rand(60, 170), kind: 'tracer', max: 0.35, col: '#ffd630' });
+          finish('boom', 2);
+        } else {
+          boom(p.x, GROUND - 5, w.size);
+          if (w.napalm) flames(p.x, GROUND - 1, 14, 1.3);
+          if (last) finish(w.napalm ? 'burn' : 'boom', w.size >= 14 ? 3 : 2); else hit(2, 4);
+        }
+      };
+      projs.push(p);
+    });
+    if (w.laser) fx.laser = [L, L + n * 0.28 + 0.3];
+  } else if (w.c === 'silo') {
+    at(T0, () => { GUN.siloAlarm(); G.throwT = 0.3; });
+    at(T0 + 0.55, () => {
+      GUN.silo(); addShake(0.3, 0, 2); cloud(podX, GROUND - 4, 10, SMOKE);
+      projs.push(makeProj({ kind: 'missile', path: 'silo', x0: podX, y0: GROUND - 20, x1: tx, y1: GROUND - 4, dur: 1.0, trail: 'fire',
+        onHit: () => { boom(tx, GROUND - 5, 19); finish('boom', 3); } }));
+    });
+  } else if (w.c === 'grenade') {
+    for (let i = 0; i < w.n; i++) at(T0 + i * w.r, () => {
+      GUN[w.snd](); recoil(2); muzzle(mx + 9, my, 1.8);
+      projs.push(makeProj({ kind: 'grenade', x0: mx + 9, y0: my, x1: tx + rand(-3, 3), y1: GROUND - 3, dur: 0.42, arc: 24,
+        onHit: p => {
+          if (w.stun) {
+            GUN.stun(); boom(p.x, GROUND - 4, 4, { noSmoke: true, quiet: true });
+            for (let j = 0; j < 3; j++) P({ x: p.x, y: GROUND - 6, kind: 'ring', max: 0.5, r: 3, grow: 60 + j * 20, delay: j * 0.1 });
+            sparks(p.x, GROUND - 8, 18, ['#5a78ff', '#bed2ff', '#ffffff']); hit(2, 1); e.stun = 0.35;
+            at(fx.t + 0.35, () => { sparks(tx, ty, 10, ['#bed2ff', '#ffffff']); finish('boom', 2); });
+          } else { boom(p.x, GROUND - 4, w.size); if (i === w.n - 1) finish('boom', 2); else hit(1, 3); }
+        } }));
+    });
+  } else if (w.c === 'beam') {
+    at(T0, () => { GUN.lasBeam(); fx.beams.push({ k: 'las', t: 0, d: 0.6 }); });
+    let acc = 0;
+    tick = (ft, dt) => { if (ft > 0 && ft < 0.6 && !finished) { acc += dt; if (acc > 0.12) { acc = 0; hit(1, 0.6); } P({ x: tx + rand(-2, 2), y: ty + rand(-2, 2), vx: rand(-10, 10), vy: -rand(10, 30), kind: 'fire', max: 0.3, r: rand(1, 2) }); } };
+    at(T0 + 0.5, () => finish('burn', 2));
+  } else if (w.c === 'quasar') {
+    at(T0, () => { GUN.quasarCharge(); fx.charge = [T0, T0 + 0.6, '#5ac4ff']; });
+    at(T0 + 0.6, () => {
+      GUN.quasar(); recoil(3); muzzle(mx + 10, my, 3); addShake(0.2, -2, 0);
+      projs.push(makeProj({ kind: 'bolt', x0: mx + 10, y0: my, x1: tx, y1: ty, dur: 0.12, onHit: () => { boom(tx, GROUND - 5, 14); flash(0.4, '#bed2ff'); finish('boom', 3); } }));
+    });
+  } else if (w.c === 'nova') {
+    for (let i = 0; i < 3; i++) at(T0 + i * 0.13, () => { GUN.nova(); recoil(1); fx.beams.push({ k: 'nova', t: 0, d: 0.07 }); sparks(tx, ty, 6, ['#ff8c1e', '#fff096']); if (i === 2) finish('burn', 2); else hit(1, 1.5); });
+  } else if (w.c === 'rail') {
+    at(T0, () => { GUN.railCharge(); fx.charge = [T0, T0 + 0.45, '#bed2ff']; });
+    at(T0 + 0.45, () => {
+      GUN.rail(); recoil(3); fx.beams.push({ k: 'rail', t: 0, d: 0.14 }); flash(0.6, '#bed2ff'); addShake(0.3, -4, 0);
+      sparks(tx, ty, 18, ['#ffffff', '#bed2ff', ...gore]); finish('fling', 3);
+    });
+  } else if (w.c === 'plasma') {
+    at(T0, () => { GUN.epochCharge(); fx.charge = [T0, T0 + 0.5, '#5ac4ff']; });
+    at(T0 + 0.5, () => {
+      GUN.epoch(); recoil(3); muzzle(mx + 10, my, 2.5);
+      projs.push(makeProj({ kind: 'plasma', x0: mx + 10, y0: my, x1: tx, y1: ty, dur: 0.28, onHit: () => { boom(tx, GROUND - 5, 11); sparks(tx, ty, 16, ['#5ac4ff', '#bff0ff', '#ffffff']); finish('boom', 2); } }));
+    });
+  } else if (w.c === 'melta') {
+    at(T0, () => { GUN.melta(); recoil(2); fx.beams.push({ k: 'melta', t: 0, d: 0.38 }); });
+    let acc = 0;
+    tick = (ft, dt) => { if (ft > 0 && ft < 0.38 && !finished) { acc += dt; if (acc > 0.1) { acc = 0; hit(1, 1); } for (let i = 0; i < 2; i++) P({ x: tx + rand(-3, 3), y: ty + rand(-3, 3), vx: rand(-20, 20), vy: -rand(20, 50), kind: 'fire', max: 0.35, r: rand(1, 2.5) }); } };
+    at(T0 + 0.32, () => finish('burn', 2));
+  } else if (w.c === 'flame' || w.c === 'gas') {
+    at(T0, () => GUN[w.snd]());
+    let acc = 0;
+    tick = (ft, dt) => {
+      if (ft > 0 && ft < w.dur) {
+        for (let i = 0; i < (w.big ? 4 : 3); i++) {
+          const v = rand(150, 190);
+          if (w.c === 'gas') P({ x: mx + 9, y: my, vx: v, vy: rand(-14, 14), drag: 1.2, kind: 'cloud', max: (tx - mx) / v + 0.25, r: rand(1.5, 3), col: pick(['#78be3c', '#b4e66e']) });
+          else P({ x: mx + 9, y: my, vx: v, vy: rand(-12, 12), drag: 1.2, kind: 'fire', max: (tx - mx) / v + 0.12, r: rand(1.5, w.big ? 4 : 3) });
+        }
+        acc += dt; if (acc > 0.14 && !finished) { acc = 0; hit(1, 0.5); }
+      }
+    };
+    at(T0 + w.dur * 0.7, () => finish(w.c === 'gas' ? 'melt' : 'burn', 2));
+  } else if (w.c === 'arc') {
+    for (let i = 0; i < w.n; i++) at(T0 + i * w.r, () => { GUN.arc(); fx.beams.push({ k: 'arc', t: 0, d: 0.18 }); sparks(tx, ty, 14, ['#bed2ff', '#ffffff', '#5a78ff']); if (i === w.n - 1) finish('boom', 2); else hit(2, 3); });
+  } else if (w.c === 'harpoon') {
+    at(T0, () => {
+      GUN.speargun(); recoil(2);
+      projs.push(makeProj({ kind: 'harpoon', x0: mx + 9, y0: my, x1: tx, y1: ty, dur: 0.16, onHit: () => { hit(2, 6); sparks(tx, ty, 10, gore); at(fx.t + 0.2, () => { boom(tx, GROUND - 6, 6); finish('boom', 2); }); } }));
+    });
+  } else if (w.c === 'throw') {
+    at(T0, () => { GUN.flag(); G.raise = 0.45; });
+    at(T0 + 0.45, () => {
+      G.armed = null;
+      projs.push(makeProj({ kind: 'flag', x0: mx + 6, y0: my - 6, x1: tx, y1: GROUND - 8, dur: 0.32, arc: 20, onHit: () => { flagStuck = true; finish('boom', 3); sparks(tx, ty, 12, gore); } }));
+    });
+  } else if (w.c === 'melee') {
+    tick = ft => { if (!finished) G.lunge = clamp(ft / 0.2, 0, 1); };
+    at(T0 + 0.2, () => { GUN.hammer(); finish('fling', 3); sparks(tx, GROUND - 8, 16, ['#ffffff', '#ffd630', '#c4ccd6']); addShake(0.3, 4, 0); });
+  } else if (w.c === 'saw') {
+    at(T0, () => GUN.defolRev());
+    let acc = 0;
+    tick = (ft, dt) => {
+      if (!finished) G.lunge = clamp((ft - 0.2) / 0.2, 0, 1);
+      if (ft > 0.4 && !finished) { acc += dt; sparks(tx - 4, ty, 2, gore); if (acc > 0.1) { acc = 0; hit(1, 0.5); } }
+    };
+    at(T0 + 0.4, () => GUN.defol());
+    at(T0 + 0.75, () => finish('boom', 2));
+  }
+
   fx.update = dt => {
     fx.t += dt;
-    if (!landed && fx.t >= 0.3) { landed = true; sfx.thud(); shake = Math.max(shake, 2); for (let i = 0; i < 10; i++) P({ x: podX + rand(-6, 6), y: GROUND - 2, vx: rand(-30, 30), vy: -rand(5, 20), drag: 1, kind: 'smoke', max: 0.8, r: rand(2, 4) }); }
-    if (fx.t >= 0.45) G.armed = cls;
-    const ft = fx.t - 0.55;
-    if (ft > 0 && !done) {
-      if (cls === 'gun' || cls === 'cannon') {
-        const rate = cls === 'gun' ? 0.05 : 0.16, max = cls === 'gun' ? 10 : 3;
-        while (fired < max && ft > fired * rate) {
-          fired++; sfx.shot();
-          P({ x: mx, y: my, vx: (tx - mx) / 0.1, vy: (GROUND - 7 + rand(-3, 3) - my) / 0.1, kind: 'tracer', max: 0.1, col: '#ffd630' });
-          if (cls === 'cannon') setTimeout(() => boom(tx + rand(-3, 3), GROUND - 6, 6), 100);
-          else sparks(tx, GROUND - 7, 2, FACTIONS[e.fac].gore);
-        }
-        if (fired >= max) { done = true; killTarget(e, 'boom'); }
-      } else if (cls === 'snipe' || cls === 'rail') {
-        done = true; sfx.shot(); if (cls === 'rail') { sfx.zap(); flashW = 0.15; }
-        shots.push({ kind: cls, t: 0 }); killTarget(e, 'boom'); sparks(tx, GROUND - 7, 10, ['#ffffff', '#bed2ff']);
-      } else if (cls === 'beam') {
-        if (!fired) { fired = 1; sfx.zap(); shots.push({ kind: 'beam', t: 0 }); }
-        if (ft > 0.25) { done = true; killTarget(e, 'burn'); }
-      } else if (['rocket', 'grenade', 'plasma', 'harpoon', 'throw'].includes(cls)) {
-        if (!fired) { fired = 1; sfx.shot(); shots.push({ kind: cls, t: 0, x: mx, y: my }); }
-      } else if (cls === 'flame' || cls === 'gas') {
-        if (ft < 0.5) for (let i = 0; i < 3; i++) { const v = rand(150, 190); P({ x: mx, y: my, vx: v, vy: rand(-12, 12), drag: 1.2, kind: cls === 'gas' ? 'cloud' : 'fire', max: (tx - mx) / v + 0.1, r: rand(1.5, 3), col: pick(['#78be3c', '#b4e66e']) }); }
-        if (ft > 0.35) { done = true; killTarget(e, cls === 'gas' ? 'melt' : 'burn'); }
-      } else if (cls === 'arc') {
-        if (!fired) { fired = 1; sfx.zap(); shots.push({ kind: 'arc', t: 0 }); }
-        if (ft > 0.15) { done = true; killTarget(e, 'boom'); sparks(tx, GROUND - 7, 14, ['#bed2ff', '#ffffff', '#5a78ff']); }
-      } else if (cls === 'melee') {
-        G.lunge = clamp(ft / 0.2, 0, 1);
-        if (ft > 0.2) { done = true; killTarget(e, 'boom'); sparks(tx, GROUND - 8, 12, ['#ffffff', '#ffd630']); sfx.shot(); }
-      }
-    }
-    if (cls === 'melee' && done) G.lunge = Math.max(0, 1 - (fx.t - 0.75) / 0.25);
-    for (const s of shots) {
-      s.t += dt;
-      if (s.x !== undefined && !s.hit) {
-        const speed = s.kind === 'grenade' ? 0.5 : s.kind === 'plasma' ? 0.3 : 0.32;
-        const k = clamp(s.t / speed, 0, 1);
-        s.x = mx + (tx - mx) * k; s.y = my + (GROUND - 6 - my) * k - (s.kind === 'grenade' || s.kind === 'throw' ? Math.sin(k * Math.PI) * 22 : 0);
-        if (s.kind === 'rocket') P({ x: s.x, y: s.y, kind: 'smoke', max: 0.5, r: 1.4 });
-        if (k >= 1) {
-          s.hit = true; done = true;
-          if (s.kind === 'harpoon' || s.kind === 'throw') { killTarget(e, 'boom'); sparks(tx, GROUND - 7, 8, FACTIONS[e.fac].gore); }
-          else { boom(tx, GROUND - 5, s.kind === 'plasma' ? 9 : 11); killTarget(e, 'boom'); }
-        }
-      }
-    }
-    if (fx.t > 1.3) { killTarget(e, 'boom'); }
-    if (fx.t >= fx.end - 0.05) { G.armed = null; G.lunge = 0; }
-    return fx.t < fx.end;
+    for (const v of fx.ev) if (!v.done && fx.t >= v.t) { v.done = true; v.fn(); }
+    if (tick) tick(fx.t - T0, dt);
+    for (const p of projs) stepProj(p, dt);
+    for (const b of fx.beams) b.t += dt;
+    if (finished && (w.c === 'melee' || w.c === 'saw')) G.lunge = Math.max(0, 1 - (fx.t - fx.doneAt) / 0.25);
+    if (!finished && fx.t > 4.5) finish();
+    if (finished && fx.t > fx.doneAt + 0.55) { G.armed = null; G.lunge = 0; return false; }
+    return true;
   };
   fx.draw = () => {
     if (fx.t < 0.3) {
       const y = -20 + (GROUND + 5 + 20) * (fx.t / 0.3);
       sprite(POD, podX - 4, y - 17, POD_MAP);
       for (let j = 1; j < 18; j++) rect(podX - (j < 6 ? 1 : 0), y - 17 - j, j < 6 ? 2 : 1, 1, j < 4 ? '#ffffff' : j < 9 ? '#ffd630' : '#ff8c1e');
-    } else if (fx.t < fx.end - 0.2) {
+    } else {
+      const fade = finished ? clamp(1 - (fx.t - fx.doneAt - 0.25) / 0.3, 0, 1) : 1;
+      ctx.globalAlpha = fade;
       sprite(POD, podX - 4, GROUND + 5 - 17, POD_MAP);
       if (((fx.t * 6) | 0) % 2 === 0) rect(podX - 2, GROUND + 5 - 8, 1, 1, '#ffffff');
+      ctx.globalAlpha = 1;
     }
-    for (const s of shots) {
-      if (s.kind === 'snipe' && s.t < 0.08) line(mx, my, tx, GROUND - 7, '#fff096');
-      if (s.kind === 'rail' && s.t < 0.12) { line(mx, my - 1, tx, GROUND - 8, '#bed2ff'); line(mx, my, tx, GROUND - 7, '#ffffff'); line(mx, my + 1, tx, GROUND - 6, '#bed2ff'); }
-      if (s.kind === 'beam' && s.t < 0.35) { line(mx, my - 1, tx, GROUND - 8, '#e23e1c'); line(mx, my, tx, GROUND - 7, '#fff096'); line(mx, my + 1, tx, GROUND - 6, '#e23e1c'); }
-      if (s.kind === 'arc' && s.t < 0.2) { let x = mx, y = my; ctx.fillStyle = '#bed2ff'; for (let i = 1; i <= 8; i++) { const nx = mx + (tx - mx) * i / 8, ny = my + (GROUND - 7 - my) * i / 8 + (i < 8 ? rand(-4, 4) : 0); line(x, y, nx, ny, i % 2 ? '#ffffff' : '#bed2ff'); x = nx; y = ny; } }
-      if (s.x !== undefined && !s.hit) {
-        if (s.kind === 'rocket') { rect(s.x, s.y, 4, 2, '#c4ccd6'); rect(s.x - 1, s.y, 1, 2, '#ff8c1e'); }
-        else if (s.kind === 'plasma') { circ(s.x, s.y, 2, '#7fe3ff'); rect(s.x, s.y, 1, 1, '#ffffff'); }
-        else if (s.kind === 'grenade') rect(s.x, s.y, 2, 2, '#525a66');
-        else if (s.kind === 'harpoon') rect(s.x - 4, s.y, 6, 1, '#c4ccd6');
-        else if (s.kind === 'throw') { rect(s.x - 5, s.y, 8, 1, '#c4ccd6'); rect(s.x - 5, s.y - 3, 3, 3, '#ffe710'); }
+    const mxx = mx + 9;
+    if (fx.charge && fx.t >= fx.charge[0] && fx.t < fx.charge[1]) {
+      const k = (fx.t - fx.charge[0]) / (fx.charge[1] - fx.charge[0]);
+      circ(mxx, my, 1 + k * 2.5 + Math.random(), fx.charge[2]); rect(mxx, my, 1, 1, '#ffffff');
+      if (Math.random() < 0.5) P({ x: mxx + rand(-8, 8), y: my + rand(-6, 6), vx: 0, vy: 0, kind: 'debris', max: 0.08, col: fx.charge[2] });
+    }
+    if (fx.laser && fx.t > fx.laser[0] && fx.t < fx.laser[1]) { ctx.globalAlpha = 0.7; line(mxx, my - 1, tx, ty, '#ff2424'); ctx.globalAlpha = 1; rect(tx, ty, 2, 2, '#ff6060'); }
+    for (const b of fx.beams) {
+      const on = b.t < (b.d || 0.1);
+      if (!on) continue;
+      if (b.k === 'snipe') { line(mxx, my, tx, ty, '#fff096'); }
+      else if (b.k === 'rail') { line(mxx, my - 1, tx + 30, ty - 1, '#bed2ff'); line(mxx, my, tx + 30, ty, '#ffffff'); line(mxx, my + 1, tx + 30, ty + 1, '#bed2ff'); }
+      else if (b.k === 'las') { const j = Math.random() < 0.3 ? 0 : 1; line(mxx, my - j, tx, ty - 1, '#e23e1c'); line(mxx, my, tx, ty, '#fff096'); line(mxx, my + j, tx, ty + 1, '#e23e1c'); circ(tx, ty, 2 + Math.random() * 2, '#ff8c1e'); }
+      else if (b.k === 'nova') { line(mxx, my, tx, ty, '#ff8c1e'); line(mxx, my - 1, tx, ty - 1, '#fff096'); }
+      else if (b.k === 'melta') { for (let i = 0; i < 6; i++) line(mxx, my, tx + rand(-2, 4), ty + rand(-5, 5), pick(['#fff096', '#ffd630', '#ff8c1e', '#ffffff'])); }
+      else if (b.k === 'arc') { let x = mxx, y = my; for (let i = 1; i <= 8; i++) { const nx = mxx + (tx - mxx) * i / 8, ny = my + (ty - my) * i / 8 + (i < 8 ? rand(-5, 5) : 0); line(x, y, nx, ny, i % 2 ? '#ffffff' : '#bed2ff'); x = nx; y = ny; } }
+    }
+    for (const p of projs) drawProj(p);
+    if (flagStuck) { const a = finished ? clamp(1 - (fx.t - fx.doneAt - 0.3) / 0.25, 0, 1) : 1; ctx.globalAlpha = a; rect(tx, GROUND - 16, 1, 16, '#c4ccd6'); rect(tx + 1, GROUND - 16, 7, 5, '#ffe710'); rect(tx + 3, GROUND - 15, 2, 3, '#1c1e26'); ctx.globalAlpha = 1; }
+  };
+  return fx;
+}
+
+/* ---------------- 탈것: 투하 → 쾅 → 각자의 무기로 처리 ---------------- */
+const VEH = {
+  'v-patriot': { t: 'exo', arm: 'patriot' }, 'v-emancipator': { t: 'exo', arm: 'eman' },
+  'v-lumberer': { t: 'exo', arm: 'lumber' }, 'v-breakthrough': { t: 'exo', arm: 'break' },
+  'v-frv': { t: 'frv', arm: 'hmg' }, 'v-supplyfrv': { t: 'frv', arm: 'supply' }, 'v-incfrv': { t: 'frv', arm: 'inc' },
+  'v-maelstrom': { t: 'tank', arm: 'mael' }, 'v-bastion': { t: 'tank', arm: 'bast' }
+};
+const VSIZE = { exo: [26, 32], frv: [38, 22], tank: [60, 24] };
+const VC = { k: '#07080d', d: '#2c3038', m: '#525a66', l: '#8a94a0', h: '#c4ccd6', y: '#ffe710', g: '#7fe3ff', G: '#2a6a80', t: '#1c1e26', T: '#3a3f4c', r: '#7a1a1a' };
+
+function drawExo(x, gy, arm, st, time) {
+  const b = st.landed ? (((time * 2) | 0) % 2) : 0;   // 숨쉬듯 들썩
+  const step = st.walk ? (((time * 12) | 0) % 2) * 2 - 1 : 0;
+  const r0 = st.r0 || 0, r1 = st.r1 || 0;
+  // 뒷다리
+  rect(x + 7, gy - 14, 3, 6, VC.d); rect(x + 5 - step, gy - 9, 4, 2, VC.k); rect(x + 5 - step, gy - 8, 3, 6, VC.d); rect(x + 3 - step, gy - 2, 7, 2, VC.t);
+  // 뒷팔 무기 (몸통 뒤)
+  const by = gy - 26 + b;
+  if (arm === 'patriot') { rect(x + 7, by - 5, 9, 5, VC.d); rect(x + 8, by - 6, 7, 1, VC.m); for (let i = 0; i < 3; i++) rect(x + 15, by - 4 + i * 1.5, 1, 1, VC.k); }
+  else if (arm === 'eman') { rect(x + 9 - r0, by + 1, 15, 2, VC.d); rect(x + 24 - r0, by, 2, 4, VC.m); rect(x + 12 - r0, by, 4, 1, VC.m); }
+  else if (arm === 'lumber') { rect(x + 8 - r0, by, 18, 3, VC.d); rect(x + 26 - r0, by - 1, 3, 5, VC.m); rect(x + 13 - r0, by - 1, 5, 1, VC.l); }
+  else if (arm === 'break') { rect(x + 9 - r0, by - 1, 13, 3, VC.d); rect(x + 22 - r0, by - 2, 2, 5, VC.m); }
+  // 엉덩이·몸통
+  rect(x + 7, gy - 16, 10, 3, VC.m);
+  rect(x + 5, gy - 28 + b, 13, 12, VC.k);
+  rect(x + 6, gy - 27 + b, 11, 10, VC.m);
+  rect(x + 6, gy - 27 + b, 11, 1, VC.h);
+  rect(x + 6, gy - 20 + b, 11, 1, VC.y);
+  rect(x + 13, gy - 25 + b, 5, 3, VC.G); rect(x + 14, gy - 25 + b, 3, 1, VC.g);
+  rect(x + 17, gy - 22 + b, 2, 5, VC.d);
+  rect(x + 7, gy - 24 + b, 2, 2, VC.d);
+  // 앞다리
+  rect(x + 12, gy - 14, 3, 6, VC.m); rect(x + 13 + step, gy - 9, 4, 2, VC.k); rect(x + 13 + step, gy - 8, 3, 6, VC.m); rect(x + 11 + step, gy - 2, 8, 2, VC.d); rect(x + 11 + step, gy - 2, 8, 1, VC.l);
+  // 앞팔 무기
+  const fy = gy - 19 + b;
+  if (arm === 'patriot') {
+    rect(x + 10, fy - 1, 8, 5, VC.d); rect(x + 10, fy - 1, 8, 1, VC.l);
+    const sp = (st.spin || 0) | 0;
+    for (let j = 0; j < 3; j++) rect(x + 18 - r1, fy + j, 8, 1, (j + sp) % 2 ? VC.l : VC.T);
+    rect(x + 26 - r1, fy - 1, 1, 5, VC.d);
+  } else if (arm === 'eman') { rect(x + 9 - r1, fy, 16, 2, VC.d); rect(x + 25 - r1, fy - 1, 2, 4, VC.m); rect(x + 12 - r1, fy - 1, 4, 1, VC.l); }
+  else if (arm === 'lumber') {
+    rect(x + 10, fy - 1, 6, 5, VC.r); rect(x + 10, fy - 1, 6, 1, '#a83a1a');
+    rect(x + 16, fy + 1, 7, 2, VC.m); rect(x + 23, fy, 1, 4, VC.d);
+    if (((time * 14) | 0) % 2) rect(x + 24, fy + 1, 1, 1, '#ff8c1e');
+  } else if (arm === 'break') {
+    rect(x + 18, gy - 28 + b, 5, 25, VC.k); rect(x + 19, gy - 27 + b, 3, 23, VC.l); rect(x + 19, gy - 27 + b, 1, 23, VC.h);
+    for (let i = 0; i < 5; i++) rect(x + 20, gy - 25 + b + i * 4, 2, 1, VC.y);
+    rect(x + 20, gy - 15 + b, 1, 2, VC.k);
+  }
+}
+function drawFRV(x, gy, arm, st, time) {
+  const wl = (st.wheel || 0) | 0;
+  for (const cx of [x + 7, x + 30]) {
+    circ(cx, gy - 4, 4, VC.t); circ(cx, gy - 4, 2, VC.T); rect(cx, gy - 4, 1, 1, VC.l);
+    const a = (wl % 4) * Math.PI / 2; rect(cx + Math.round(Math.cos(a) * 3), gy - 4 + Math.round(Math.sin(a) * 3), 1, 1, VC.l);
+  }
+  const s = st.sq || 0;
+  rect(x + 1, gy - 11 + s, 36, 5, VC.k);
+  rect(x + 2, gy - 10 + s, 34, 3, VC.m);
+  rect(x + 2, gy - 10 + s, 34, 1, VC.l);
+  rect(x + 4, gy - 8 + s, 18, 1, VC.y);
+  rect(x + 26, gy - 13 + s, 10, 2, VC.m); rect(x + 26, gy - 13 + s, 10, 1, VC.l);
+  rect(x + 36, gy - 10 + s, 2, 3, VC.d); rect(x + 36, gy - 12 + s, 1, 1, '#fff096');
+  line(x + 12, gy - 11 + s, x + 14, gy - 19 + s, VC.d); line(x + 24, gy - 11 + s, x + 22, gy - 19 + s, VC.d);
+  rect(x + 14, gy - 19 + s, 9, 1, VC.d); line(x + 25, gy - 12 + s, x + 23, gy - 17 + s, VC.g);
+  const ty = gy - 21 + s, rc = st.r1 || 0;
+  if (arm === 'hmg') { rect(x + 15, ty, 6, 3, VC.d); rect(x + 15, ty, 6, 1, VC.l); rect(x + 20 - rc, ty - 1, 5, 2, VC.d); rect(x + 25 - rc, ty, 8, 1, VC.k); rect(x + 32 - rc, ty - 1, 1, 3, VC.d); }
+  else if (arm === 'inc') { rect(x + 13, ty - 2, 4, 4, VC.r); rect(x + 15, ty, 6, 3, VC.d); rect(x + 20, ty, 9, 2, VC.m); rect(x + 29, ty - 1, 1, 4, VC.d); if (((time * 14) | 0) % 2) rect(x + 30, ty, 1, 1, '#ff8c1e'); }
+  else if (arm === 'supply' && !st.dropped) { for (let i = 0; i < 2; i++) { rect(x + 2 + i * 6, gy - 16 + s, 5, 5, '#3a4a5a'); rect(x + 2 + i * 6, gy - 16 + s, 5, 1, '#5ac4ff'); rect(x + 4 + i * 6, gy - 14 + s, 1, 2, '#5ac4ff'); } }
+}
+function drawTank(x, gy, arm, st, time) {
+  const wl = (st.wheel || 0) | 0, s = st.sq || 0, rc = st.recoil || 0;
+  rect(x + 1, gy - 7, 46, 6, VC.t); rect(x, gy - 6, 1, 4, VC.t); rect(x + 47, gy - 6, 1, 4, VC.t);
+  rect(x + 3, gy - 8, 42, 1, VC.d);
+  for (let i = 0; i < 6; i++) { circ(x + 5 + i * 7.6, gy - 4, 2, VC.T); rect(x + 5 + i * 7.6, gy - 4, 1, 1, VC.l); }
+  for (let i = 0; i < 11; i++) rect(x + 2 + ((i * 4 + wl) % 44), gy - 1, 2, 1, VC.T);
+  const hy = gy - 13 + s - (st.rock || 0);
+  rect(x + 1, hy, 46, 5, VC.k); rect(x + 2, hy + 1, 44, 4, VC.m); rect(x + 3, hy, 40, 1, VC.l);
+  rect(x + 44, hy + 1, 3, 4, VC.m); rect(x + 46, hy + 2, 2, 2, VC.d);
+  rect(x + 2, hy + 4, 44, 1, VC.d); rect(x + 6, hy + 2, 14, 1, VC.y);
+  if (arm === 'bast') {
+    const tY = hy - 7;
+    rect(x + 14, tY, 17, 7, VC.k); rect(x + 15, tY + 1, 15, 5, VC.m); rect(x + 15, tY, 13, 1, VC.h);
+    rect(x + 30, tY + 2, 2, 4, VC.m); rect(x + 18, tY - 1, 4, 1, VC.d);
+    rect(x + 32 - rc, tY + 2, 26, 2, VC.d); rect(x + 32 - rc, tY + 2, 26, 1, VC.T);
+    rect(x + 42 - rc, tY + 1, 3, 4, VC.d); rect(x + 56 - rc, tY + 1, 3, 4, VC.k);
+    rect(x + 30, tY + 5, 6, 1, VC.k);
+  } else {
+    rect(x + 18, hy - 4, 12, 4, VC.k); rect(x + 19, hy - 3, 10, 3, VC.m); rect(x + 19, hy - 4, 10, 1, VC.l);
+    rect(x + 22, hy - 6, 2, 2, VC.d); rect(x + 24, hy - 6, 6, 1, VC.d);
+    const sp = (st.spin || 0) | 0;
+    for (const gy2 of [hy - 3, hy + 1]) {
+      rect(x + 40, gy2 - 1, 6, 4, VC.d);
+      for (let j = 0; j < 3; j++) rect(x + 46 - (st.r1 || 0), gy2 + j - 1 + 1, 8, 1, (j + sp) % 2 ? VC.l : VC.T);
+    }
+    rect(x + 3, hy - 8, 13, 8, VC.k); rect(x + 4, hy - 7, 11, 7, VC.m);
+    if (st.hatch) { rect(x + 3, hy - 13, 1, 5, VC.l); rect(x + 15, hy - 13, 1, 5, VC.l); rect(x + 5, hy - 7, 3, 2, VC.k); rect(x + 10, hy - 7, 3, 2, VC.k); }
+    else { rect(x + 4, hy - 8, 11, 1, VC.h); rect(x + 9, hy - 8, 1, 1, VC.d); }
+  }
+}
+
+function vehicleFx(k, e, tx) {
+  const V = VEH[k] || VEH['v-patriot'];
+  const [vw, vh] = VSIZE[V.t];
+  const fx = { t: 0, ev: [] };
+  const projs = [];
+  const at = (t, fn) => fx.ev.push({ t, fn });
+  const v = { x: clamp(enemyX(e) - vw - 8, 0, PX + 10), y: -80, frame: true, landed: false, alpha: 1, st: {}, vx: 0 };
+  const st = v.st, gore = FACTIONS[e.fac].gore, ty = GROUND - 7;
+  const LAND = 1.0, A = 1.3;
+  let finished = false, doneAt = 0, tick = null, ram = false, gone = false;
+  const finish = (how = 'boom', lv = 2) => { if (finished) return; killTarget(e, how, lv); finished = true; doneAt = fx.t; };
+  const hit = (lv = 1, kb = 1) => hitEnemy(e, lv, kb);
+  const cx = () => v.x + vw / 2;
+  const ex = () => enemyX(e) + (e.kx || 0) + FACTIONS[e.fac].w / 2;
+
+  at(0.42, () => { sfx.podFall(0.58); sfx.thrust(0.6); });
+  at(LAND, () => {
+    v.landed = true; st.landed = true; v.y = 0; st.sq = 2;
+    sfx.slam(1.35); stopFor(0.1, true); addShake(0.7, 0, 4); flash(0.55);
+    dust(cx(), 16, vw / 2); scorch.push({ x: cx(), r: vw * 0.4, life: 0 });
+    P({ x: cx(), y: GROUND + 1, kind: 'ring', max: 0.5, r: 6, grow: 90 });
+  });
+  at(LAND + 0.18, () => {
+    v.frame = false; GUN.hiss();
+    for (let i = 0; i < 8; i++) P({ x: v.x + (i % 2 ? vw + 2 : -2), y: GROUND - vh + i * 3, vx: (i % 2 ? 1 : -1) * rand(40, 90), vy: -rand(60, 130), g: 360, kind: 'debris', max: 1.1, col: pick([VC.l, VC.m, VC.y]) });
+    if (V.t === 'exo') GUN.exoStep();
+  });
+
+  // ----- 각 탈것의 공격 -----
+  const ex0 = { exo: [25, 18], frv: [33, 21], tank: [58, 17] };
+  if (V.arm === 'patriot') {
+    at(A, () => GUN.spin(0.32));
+    tick = (ft, dt) => { if (ft > 0 && ft < 0.95) st.spin = (st.spin || 0) + dt * 40; };
+    for (let i = 0; i < 16; i++) at(A + 0.32 + i * 0.034, () => {
+      GUN.minigun(); muzzle(v.x + 27, GROUND - 18, 1.5); casing(v.x + 16, GROUND - 18); st.r1 = 1;
+      tracer(v.x + 27, GROUND - 18, ex(), ty + rand(-3, 3), '#ffd630', 0.06); sparks(ex(), ty, 2, gore); hit(1, 0.8);
+    });
+    for (let i = 0; i < 2; i++) at(A + 0.95 + i * 0.16, () => {
+      GUN.rocketPod(); P({ x: v.x + 15, y: GROUND - 29, vx: -40, vy: -20, drag: 2, kind: 'smoke', max: 0.6, r: 2.5 });
+      const p = makeProj({ kind: 'rocket', x0: v.x + 16, y0: GROUND - 30, x1: ex() + i * 3, y1: GROUND - 5, dur: 0.3, arc: 10, trail: 'smoke' });
+      p.onHit = () => { boom(p.x, GROUND - 5, 10); if (i === 1) finish('boom', 2); else hit(2, 5); };
+      projs.push(p);
+    });
+  } else if (V.arm === 'eman') {
+    for (let i = 0; i < 6; i++) at(A + i * 0.17, () => {
+      GUN.ac(); const back = i % 2 === 0, my = back ? GROUND - 25 : GROUND - 18, mx = v.x + (back ? 26 : 27);
+      if (back) st.r0 = 3; else st.r1 = 3;
+      muzzle(mx, my, 2.4); casing(v.x + 12, my); addShake(0.08, -1, 0);
+      projs.push(makeProj({ kind: 'shellAC', x0: mx, y0: my, x1: ex() + rand(-2, 2), y1: ty, dur: 0.08, onHit: () => { boom(ex() + rand(-3, 3), GROUND - 6, 7); if (i === 5) finish('boom', 2); else hit(1, 3); } }));
+    });
+  } else if (V.arm === 'lumber') {
+    at(A, () => {
+      GUN.atCannon(); st.r0 = 4; muzzle(v.x + 29, GROUND - 25, 3.5); addShake(0.25, -4, 0);
+      P({ x: v.x + 29, y: GROUND - 24, kind: 'ring', max: 0.25, r: 2, grow: 40 });
+      projs.push(makeProj({ kind: 'shellAC', x0: v.x + 29, y0: GROUND - 25, x1: ex(), y1: ty, dur: 0.06, onHit: () => { boom(ex(), GROUND - 6, 12); hit(3, 10); } }));
+    });
+    at(A + 0.5, () => GUN.flamer());
+    tick = ft => {
+      if (ft > 0.5 && ft < 1.1) for (let i = 0; i < 4; i++) { const v0 = rand(150, 190); P({ x: v.x + 25, y: GROUND - 17, vx: v0, vy: rand(-8, 16), drag: 1.1, kind: 'fire', max: (ex() - v.x - 25) / v0 + 0.15, r: rand(1.5, 3.5) }); }
+    };
+    at(A + 0.85, () => finish('burn', 2));
+  } else if (V.arm === 'break') {
+    at(A, () => {
+      GUN.flak(); st.r0 = 3; muzzle(v.x + 24, GROUND - 26, 3); addShake(0.15, -2, 0);
+      projs.push(makeProj({ kind: 'shellAC', x0: v.x + 24, y0: GROUND - 26, x1: ex(), y1: GROUND - 26, dur: 0.12, onHit: () => {
+        GUN.flakPop(); boom(ex(), GROUND - 26, 6, { noSmoke: true, quiet: true });
+        for (let j = 0; j < 16; j++) P({ x: ex(), y: GROUND - 26, vx: rand(-60, 60), vy: rand(40, 150), kind: 'tracer', max: 0.3, col: '#ffd630' });
+        hit(2, 4);
+      } }));
+    });
+    let x0 = 0, x1 = 0;
+    at(A + 0.5, () => { st.walk = true; x0 = v.x; x1 = Math.max(v.x, enemyX(e) + (e.kx || 0) - 22); GUN.exoStep(); });
+    at(A + 0.62, () => GUN.exoStep());
+    tick = ft => { if (ft >= 0.5 && ft < 0.72 && x1) { const q = (ft - 0.5) / 0.22; v.x = x0 + (x1 - x0) * q * q; } };
+    at(A + 0.72, () => { st.walk = false; GUN.shieldBash(); finish('fling', 3); addShake(0.35, 5, 0); sparks(v.x + 23, GROUND - 14, 16, ['#ffffff', '#ffd630', '#c4ccd6']); });
+  } else if (V.arm === 'hmg') {
+    at(A - 0.15, () => GUN.engine(0.4, 0.8));
+    for (let i = 0; i < 8; i++) at(A + i * 0.12, () => {
+      GUN.hmg(); st.r1 = 2; muzzle(v.x + 33, GROUND - 21, 2); casing(v.x + 20, GROUND - 21);
+      tracer(v.x + 33, GROUND - 21, ex(), ty + rand(-3, 3), '#ff8c1e', 0.08); sparks(ex(), ty, 4, gore);
+      if (i === 7) finish('boom', 2); else hit(1, 2.2);
+    });
+  } else if (V.arm === 'supply') {
+    at(A, () => { GUN.engine(0.8, 1.3); st.drive = true; dust(v.x, 6); });
+    tick = (ft, dt) => {
+      if (!st.drive) return;
+      v.vx = Math.min(430, v.vx + 900 * dt); v.x += v.vx * dt; st.wheel = (st.wheel || 0) + v.vx * dt * 0.5;
+      if (Math.random() < 0.5) P({ x: v.x + 2, y: GROUND - 2, vx: -rand(20, 60), vy: -rand(5, 20), drag: 1, kind: 'smoke', max: 0.6, r: rand(1.5, 3) });
+      if (!ram && v.x + vw >= enemyX(e) + (e.kx || 0) + 4) {
+        ram = true; GUN.crunch(); finish('fling', 3); addShake(0.3, 5, 0); st.dropped = true;
+        for (let i = 0; i < 2; i++) P({ x: v.x + 3 + i * 6, y: GROUND - 16, vx: rand(-90, -30), vy: -rand(100, 150), g: 420, kind: 'crate', max: 1.4 });
+        at(fx.t + 0.3, () => { GUN.crate(); GUN.screech(); }); at(fx.t + 0.45, () => GUN.crate());
       }
+      if (v.x > W + 10) gone = true;
+    };
+  } else if (V.arm === 'inc') {
+    at(A, () => GUN.flamer());
+    at(A + 0.3, () => GUN.flamer());
+    tick = ft => {
+      if (ft > 0 && ft < 0.8) for (let i = 0; i < 4; i++) { const v0 = rand(150, 190); P({ x: v.x + 30, y: GROUND - 21, vx: v0, vy: rand(10, 40), drag: 1.1, kind: 'fire', max: (ex() - v.x - 30) / v0 + 0.15, r: rand(1.5, 3.5) }); }
+    };
+    at(A + 0.5, () => finish('burn', 2));
+  } else if (V.arm === 'mael') {
+    at(A - 0.1, () => GUN.engine(0.3, 0.7));
+    at(A, () => GUN.spin(0.2));
+    tick = (ft, dt) => { if (ft > 0 && ft < 0.8) st.spin = (st.spin || 0) + dt * 45; };
+    for (let i = 0; i < 18; i++) at(A + 0.2 + i * 0.03, () => {
+      GUN.gatlingTwin(); const gy2 = i % 2 ? GROUND - 15 : GROUND - 11; st.r1 = 1;
+      muzzle(v.x + 54, gy2, 1.3); tracer(v.x + 54, gy2, ex(), ty + rand(-3, 3), '#ffd630', 0.06); sparks(ex(), ty, 2, gore); hit(1, 0.6);
+    });
+    at(A + 0.8, () => { GUN.hatch(); st.hatch = true; });
+    for (let i = 0; i < 2; i++) at(A + 0.95 + i * 0.15, () => {
+      GUN.silo2(); cloud(v.x + 7 + i * 5, GROUND - 22, 5, SMOKE);
+      const p = makeProj({ kind: 'missile', path: 'silo', x0: v.x + 6 + i * 5, y0: GROUND - 22, x1: ex() + i * 4 - 2, y1: GROUND - 4, dur: 0.75, trail: 'fire' });
+      p.onHit = () => { boom(p.x, GROUND - 5, 11); if (i === 1) finish('boom', 2); else hit(2, 5); };
+      projs.push(p);
+    });
+    fx.laser = [A + 0.9, A + 1.75];
+    at(A + 1.9, () => { st.hatch = false; GUN.hiss(); cloud(cx(), GROUND - 8, 14, ['#8a8682', '#a6a096', '#6a6662']); });
+  } else if (V.arm === 'bast') {
+    at(A - 0.15, () => GUN.engine(0.35, 0.6));
+    for (let i = 0; i < 6; i++) at(A + i * 0.08, () => { GUN.coax(); muzzle(v.x + 37, GROUND - 15, 1.2); tracer(v.x + 37, GROUND - 15, ex(), ty + rand(-3, 3), '#fff096', 0.07); sparks(ex(), ty, 2, gore); hit(1, 1); });
+    at(A + 0.65, () => {
+      GUN.tankGun(); st.recoil = 5; st.rock = 2; stopFor(0.06, true); addShake(0.5, -6, 0); flash(0.35, '#fff4d0');
+      muzzle(v.x + 60, GROUND - 17, 5); P({ x: v.x + 60, y: GROUND - 17, kind: 'ring', max: 0.35, r: 3, grow: 70 });
+      cloud(v.x + 62, GROUND - 17, 8, SMOKE); for (let j = 0; j < 8; j++) P({ x: v.x + 30, y: GROUND - 3, vx: rand(-80, 40), vy: -rand(5, 25), drag: 1.5, kind: 'smoke', max: 0.8, r: rand(2, 4) });
+      projs.push(makeProj({ kind: 'shellAC', x0: v.x + 60, y0: GROUND - 17, x1: ex(), y1: ty, dur: 0.05, onHit: () => { boom(ex(), GROUND - 6, 18); finish('fling', 3); } }));
+    });
+  }
+
+  fx.update = dt => {
+    fx.t += dt;
+    for (const ev of fx.ev) if (!ev.done && fx.t >= ev.t) { ev.done = true; ev.fn(); }
+    if (!v.landed && fx.t > 0.42) { const q = clamp((fx.t - 0.42) / (LAND - 0.42), 0, 1); v.y = -80 * Math.pow(1 - q, 1.7); }
+    if (tick) tick(fx.t - A, dt);
+    for (const p of projs) stepProj(p, dt);
+    for (const key of ['r0', 'r1', 'recoil', 'sq', 'rock']) if (st[key] > 0) st[key] = Math.max(0, st[key] - dt * (key === 'recoil' ? 10 : 20));
+    if (!finished && fx.t > 5) finish();
+    if (gone && finished) return false;
+    if (finished && fx.t > doneAt + 1.3) return false;
+    return true;
+  };
+  fx.draw = () => {
+    if (fx.t < 0.9) drawBeacon(cx(), fx.t, '#5ac4ff', PX + 4);
+    if (fx.t < 0.42) return;
+    const gy = GROUND + Math.round(v.y);
+    let a = 1;
+    if (finished && !gone && V.arm !== 'supply') { const f = fx.t - doneAt; if (f > 0.9) a = ((fx.t * 16) | 0) % 2 ? clamp(1 - (f - 0.9) / 0.4, 0, 1) : 0.25; }
+    ctx.globalAlpha = a;
+    if (v.frame) {   // 투하 틀 + 역추진 불꽃
+      rect(v.x - 3, gy - vh - 6, vw + 6, 2, VC.l); rect(v.x - 3, gy - vh - 6, 2, vh + 4, VC.m); rect(v.x + vw + 1, gy - vh - 6, 2, vh + 4, VC.m);
+      rect(v.x - 4, gy - 4, 4, 3, VC.d); rect(v.x + vw, gy - 4, 4, 3, VC.d); rect(v.x - 3, gy - vh - 6, vw + 6, 1, VC.y);
+      if (!v.landed && fx.t > 0.62) for (const fx0 of [v.x - 2, v.x + vw + 2]) { const L = 4 + Math.random() * 8; for (let j = 0; j < L; j++) rect(fx0 + (j < 3 ? -1 : 0), gy - 1 + j, j < 3 ? 2 : 1, 1, j < 2 ? '#ffffff' : j < 5 ? '#ffd630' : '#ff8c1e'); }
+      if (!v.landed && fx.t <= 0.62) for (let j = 1; j < 16; j++) if ((j + ((fx.t * 40) | 0)) % 4) rect(v.x + vw / 2, gy - vh - 6 - j, 1, 1, j < 4 ? '#ffffff' : '#ffd630');
     }
+    if (V.t === 'exo') drawExo(v.x, gy, V.arm, st, G.time);
+    else if (V.t === 'frv') drawFRV(v.x, gy, V.arm, st, G.time);
+    else drawTank(v.x, gy, V.arm, st, G.time);
+    ctx.globalAlpha = 1;
+    if (fx.laser && fx.t > fx.laser[0] && fx.t < fx.laser[1]) { ctx.globalAlpha = 0.65; line(v.x + 24, GROUND - 19, ex(), ty, '#ff2424'); ctx.globalAlpha = 1; rect(ex(), ty, 2, 2, '#ff6060'); }
+    for (const p of projs) drawProj(p);
   };
   return fx;
 }
 
 function podFx(e, tx) {
   const fx = { t: 0, end: 2.8 };
-  let hit = false;
+  let hit = false, fall = false;
   fx.update = dt => {
     fx.t += dt;
+    if (!fall && fx.t >= 0.5) { fall = true; sfx.podFall(0.28); }
     if (!hit && fx.t >= 0.78) {
-      hit = true; sfx.thud(); shake = Math.max(shake, 5); killTarget(e, 'crush');
+      hit = true; sfx.slam(1); killTarget(e, 'crush', 3); addShake(0.2, 0, 4);
       P({ x: tx, y: GROUND - 6, kind: 'flash', max: 0.06, r: 9 });
       P({ x: tx, y: GROUND + 1, kind: 'ring', max: 0.5, r: 6, grow: 60 });
       for (let i = 0; i < 14; i++) P({ x: tx + rand(-8, 8), y: GROUND - 2, vx: rand(-40, 40), vy: -rand(5, 25), drag: 1, kind: 'smoke', max: 1.0, r: rand(2, 4.5) });
@@ -675,34 +1294,63 @@ function drawLouis(t) {
   const bob = G.armed ? 0 : ((t * 2) | 0) % 2;
   const tgt = G.targets[G.targets.length - 1];
   const lx = PX - 8 + (tgt ? G.lunge * (enemyX(tgt) - PX - 6) : 0);
-  sprite(HD, lx, GROUND - 22 + bob, HD_MAP);
+  const rc = Math.round(G.recoil);
+  sprite(HD, lx - (rc > 1 ? 1 : 0), GROUND - 22 + bob, HD_MAP);
   if (G.throwT > 0) { rect(lx + 10, GROUND - 25 + bob, 2, 7, '#3a3f4c'); rect(lx + 10, GROUND - 26 + bob, 2, 1, '#07080d'); }
-  if (G.armed) {
-    const big = ['rocket', 'beam', 'rail', 'plasma', 'cannon', 'grenade'].includes(G.armed);
-    rect(lx + 8, GROUND - 14, big ? 12 : 10, big ? 3 : 2, '#2a2c34');
-    rect(lx + 8, GROUND - 14, 4, 1, '#525a66');
-    if (G.armed === 'flame') rect(lx + 18, GROUND - 14, 2, 2, '#ff8c1e');
-    if (G.armed === 'beam' || G.armed === 'rail' || G.armed === 'plasma') rect(lx + 17, GROUND - 14, 2, 1, '#7fe3ff');
+  if (G.raise > 0) {   // 원 트루 플래그를 치켜듦
+    rect(lx + 11, GROUND - 34, 1, 22, '#c4ccd6'); rect(lx + 12, GROUND - 34, 8, 5, '#ffe710'); rect(lx + 14, GROUND - 33, 2, 3, '#1c1e26');
+    return;
   }
+  const a = G.armed; if (!a) return;
+  const gx = lx + 8 - rc, gy = GROUND - 14, D = '#2a2c34', M = '#525a66', L = '#8a94a0';
+  if (a === 'gun') { rect(gx, gy, 9, 2, D); rect(gx + 9, gy, 4, 1, D); rect(gx + 2, gy + 2, 2, 2, D); rect(gx, gy, 4, 1, M); }
+  else if (a === 'snipe') { rect(gx, gy, 16, 1, D); rect(gx, gy + 1, 6, 1, D); rect(gx + 3, gy - 2, 5, 1, M); rect(gx + 15, gy - 1, 1, 3, D); }
+  else if (a === 'cannon') { rect(gx, gy - 1, 10, 3, D); rect(gx + 10, gy, 6, 1, D); rect(gx + 15, gy - 1, 2, 3, M); rect(gx + 2, gy + 2, 3, 3, D); }
+  else if (a === 'rocket') { rect(gx - 3, gy - 2, 17, 3, '#3e4a32'); rect(gx - 3, gy - 2, 17, 1, '#5a6a46'); rect(gx + 14, gy - 3, 1, 5, D); rect(gx + 3, gy + 1, 2, 2, D); }
+  else if (a === 'grenade') { rect(gx, gy - 1, 7, 4, D); rect(gx + 7, gy, 6, 2, D); rect(gx + 1, gy - 1, 5, 1, M); }
+  else if (a === 'beam' || a === 'rail' || a === 'quasar' || a === 'nova' || a === 'plasma') { rect(gx, gy - 1, 14, 3, D); rect(gx, gy - 1, 14, 1, L); rect(gx + 13, gy, 2, 1, a === 'beam' || a === 'nova' ? '#ff8c1e' : '#7fe3ff'); rect(gx + 3, gy + 2, 2, 2, D); }
+  else if (a === 'melta') { rect(gx, gy - 1, 9, 3, D); rect(gx + 9, gy - 2, 4, 5, M); rect(gx + 13, gy - 1, 1, 3, '#ff8c1e'); }
+  else if (a === 'flame' || a === 'gas') { rect(gx - 2, gy - 4, 4, 6, a === 'gas' ? '#4a6a2a' : '#7a1a1a'); rect(gx, gy, 12, 2, D); if (((t * 14) | 0) % 2) rect(gx + 12, gy, 1, 1, a === 'gas' ? '#b4e66e' : '#ff8c1e'); }
+  else if (a === 'arc') { rect(gx, gy - 1, 11, 3, D); for (let i = 0; i < 3; i++) rect(gx + 4 + i * 2, gy - 2, 1, 1, '#bed2ff'); rect(gx + 11, gy, 2, 1, '#bed2ff'); }
+  else if (a === 'harpoon') { rect(gx, gy, 10, 2, D); rect(gx + 10, gy, 5, 1, '#c4ccd6'); }
+  else if (a === 'melee') { rect(gx, gy, 9, 1, '#5a4030'); rect(gx + 8, gy - 3, 4, 7, M); rect(gx + 8, gy - 3, 4, 1, L); }
+  else if (a === 'saw') { rect(gx, gy - 1, 5, 3, '#ffd630'); rect(gx + 5, gy, 10, 2, L); if (((t * 30) | 0) % 2) rect(gx + 6, gy + 2, 9, 1, M); }
+  else if (a === 'remote') { rect(gx + 2, gy - 3, 3, 4, D); rect(gx + 3, gy - 3, 1, 1, ((t * 8) | 0) % 2 ? '#ff2424' : '#5a1010'); }
 }
+const WHITE = new Proxy({}, { get: () => '#ffffff' });
+const STUNC = new Proxy({}, { get: () => '#bed2ff' });
 function drawEnemy(e, t) {
   if (e.dead) return;
   const F = FACTIONS[e.fac];
   const frame = (e.frozen || e.stop) ? 0 : (((t * 6 + e.bob) | 0) % 2);
   const rows = F.f[frame];
-  const x = enemyX(e);
-  if (e.frozen) { ctx.globalAlpha = ((t * 16) | 0) % 2 ? 1 : 0.6; }
-  sprite(rows, x, GROUND - rows.length, F.map);
+  const x = enemyX(e) + Math.round(e.kx || 0) + (e.stun > 0 ? (((t * 40) | 0) % 2) : 0);
+  let map = F.map;
+  if (e.flash > 0) map = WHITE;
+  else if (e.stun > 0 && ((t * 20) | 0) % 2) map = STUNC;
+  else if (e.frozen) ctx.globalAlpha = ((t * 16) | 0) % 2 ? 1 : 0.6;
+  // 하얗게 깜빡일 때는 빈칸까지 칠하지 않도록 원래 지도에 있는 글자만
+  if (map !== F.map) { const m = {}; for (const k in F.map) m[k] = map[k]; map = m; }
+  sprite(rows, x, GROUND - rows.length, map);
   ctx.globalAlpha = 1;
 }
 
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  G.time += dt;
-  update(dt);
+  // 역경직: 잠깐 세상이 멈춤 (흔들림·번쩍임은 계속)
+  if (hitstop > 0) hitstop -= dt;
+  else { G.time += dt; update(dt); }
+  trauma = Math.max(0, trauma - dt * 2.2);
+  const kd = Math.exp(-dt * 14); kickX *= kd; kickY *= kd;
+  flashA = Math.max(0, flashA - dt * 5);
   render();
   requestAnimationFrame(frame);
+}
+function decayHit(e, dt) {
+  if (e.flash > 0) e.flash -= dt;
+  if (e.stun > 0) e.stun -= dt;
+  if (e.kx > 0) e.kx = Math.max(0, e.kx - dt * 30);
 }
 function update(dt) {
   if (G.state === 'play' && G.enemy && !G.enemy.frozen && !G.enemy.stop) {
@@ -711,19 +1359,25 @@ function update(dt) {
   }
   for (let i = G.fx.length - 1; i >= 0; i--) if (!G.fx[i].update(dt)) G.fx.splice(i, 1);
   for (let i = G.targets.length - 1; i >= 0; i--) if (G.targets[i].dead) G.targets.splice(i, 1);
+  for (const e of G.targets) decayHit(e, dt);
+  if (G.enemy) decayHit(G.enemy, dt);
   updateParts(dt);
   for (const s of scorch) s.life += dt;
   if (G.throwT > 0) G.throwT -= dt;
+  if (G.raise > 0) G.raise -= dt;
+  if (G.recoil > 0) G.recoil = Math.max(0, G.recoil - dt * 18);
   if (G.badFlash > 0) { G.badFlash -= dt; if (G.badFlash <= 0) { lastHud = ''; hud(); } }
-  if (flashW > 0) flashW -= dt;
-  shake = Math.max(0, shake - dt * 20);
   if (G.state === 'play' && !G.enemy && G.fx.length === 0 && G.targets.length === 0) roundClear();
 }
 function render() {
-  const sx = shake ? Math.round(rand(-shake, shake) * 0.5) : 0, sy = shake ? Math.round(rand(-shake, shake) * 0.3) : 0;
+  const amp = trauma * trauma;
+  const sx = Math.round(rand(-1, 1) * 10 * amp + kickX), sy = Math.round(rand(-1, 1) * 7 * amp + kickY);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  rect(0, 0, W, H, '#07080d');
   ctx.setTransform(1, 0, 0, 1, sx, sy);
   if (!bgCanvas) bgCanvas = makeBg(G.faction);
   ctx.drawImage(bgCanvas, 0, 0);
+  if (sy < 0) { ctx.fillStyle = '#181210'; ctx.fillRect(0, H, W, -sy + 1); }
   for (const s of scorch) { ctx.globalAlpha = clamp(1 - s.life / 12, 0, 1) * 0.8; circ(s.x, GROUND + 2, s.r, '#181210', 0.28); ctx.globalAlpha = 1; }
   drawParts(0);
   for (const f of G.fx) f.draw();
@@ -738,7 +1392,7 @@ function render() {
     if (d > 0.72) { ctx.globalAlpha = (d - 0.72) / 0.28 * (0.35 + 0.15 * Math.sin(G.time * 18)); rect(0, 0, 6, H, '#ff2424'); rect(0, 0, W, 3, '#ff2424'); rect(0, H - 3, W, 3, '#ff2424'); ctx.globalAlpha = 1; }
   }
   if (G.badFlash > 0) { ctx.globalAlpha = G.badFlash * 0.5; rect(0, 0, W, H, '#ff2424'); ctx.globalAlpha = 1; }
-  if (flashW > 0) { ctx.globalAlpha = flashW * 2; rect(0, 0, W, H, '#ffffff'); ctx.globalAlpha = 1; }
+  if (flashA > 0) { ctx.globalAlpha = Math.min(0.8, flashA); rect(0, 0, W, H, flashC); ctx.globalAlpha = 1; }
 }
 
 /* ---------------- 라운드·게임 끝 ---------------- */
@@ -751,7 +1405,7 @@ function roundClear() {
   setTimeout(() => { if (G.state === 'clear' && performance.now() - G.clearAt > 2900) nextRound(); }, 3000);
 }
 function gameOver() {
-  G.state = 'dying'; G.dead = true; G.enemy.stop = true; sfx.die(); shake = 6;
+  G.state = 'dying'; G.dead = true; G.enemy.stop = true; sfx.die(); stopFor(0.28, true); addShake(0.9, -4, 0); flash(0.6, '#ff4040');
   sparks(PX, GROUND - 12, 18, ['#ff2424', '#8a1e12']);
   setTimeout(() => {
     G.state = 'over'; G.overAt = performance.now();
