@@ -893,7 +893,7 @@ function drawParts(pass) {
 const G = {
   state: 'title', round: 0, score: 0, best: 0, list: [], idx: 0, prog: 0, perfect: true,
   kills: 0, miss: 0, faction: 'bug', throwT: 0, enemy: null, targets: [], fx: [], badFlash: 0, armed: null, lunge: 0,
-  clearAt: 0, overAt: 0, time: 0, bonus: null, dead: false, lastKill: '', recoil: 0, raise: 0
+  clearAt: 0, overAt: 0, time: 0, bonus: null, dead: false, lastKill: '', recoil: 0, raise: 0, viewT: 0, viewBig: false
 };
 try { G.best = +localStorage.getItem('setac-hero-best') || 0; } catch (e) { G.best = 0; }
 
@@ -930,7 +930,7 @@ function press(d) {
   audio();
   if (G.state === 'title' || G.state === 'over') { if (performance.now() > G.overAt + 700) startGame(); return; }
   if (G.state === 'clear') { if (performance.now() > G.clearAt + 700) nextRound(); return; }
-  if (G.state !== 'play' || !G.enemy) return;
+  if (G.state !== 'play' || !G.enemy) return;   // 감상시간에는 입력을 받지 않음
   const s = STRATS[G.list[G.idx]];
   if (s.c[G.prog] === d) {
     G.prog++; G.score += 5; sfx.key();
@@ -957,7 +957,8 @@ function success(s) {
   launch(s, e);
   sfx.ok();
   G.idx++; G.prog = 0;
-  spawnEnemy();
+  G.enemy = null; G.viewT = 0; G.viewBig = !!(e.heavy || e.struct);   // 감상시간: 지금 적이 쓰러진 뒤 잠깐 쉬었다가 다음 적
+  lastHud = ''; hud();
 }
 
 /* ---------------- 처치 연출 ---------------- */
@@ -1829,7 +1830,9 @@ function update(dt) {
   if (G.raise > 0) G.raise -= dt;
   if (G.recoil > 0) G.recoil = Math.max(0, G.recoil - dt * 18);
   if (G.badFlash > 0) { G.badFlash -= dt; if (G.badFlash <= 0) { lastHud = ''; hud(); } }
-  if (G.state === 'play' && !G.enemy && G.fx.length === 0 && G.targets.length === 0) roundClear();
+  if (G.state === 'play' && !G.enemy && G.idx < G.list.length) {
+    if (G.targets.length === 0) { G.viewT += dt; if (G.viewT >= (G.viewBig ? 1.0 : 0.6)) { spawnEnemy(); lastHud = ''; hud(); } }
+  } else if (G.state === 'play' && !G.enemy && G.fx.length === 0 && G.targets.length === 0) roundClear();
 }
 function render() {
   const amp = trauma * trauma;
@@ -1892,7 +1895,8 @@ function hud() {
   const cur = $('cur'), ar = $('ar'), nx = $('nx');
   if (G.state !== 'play' || G.idx >= G.list.length) { cur.innerHTML = ''; ar.innerHTML = ''; nx.innerHTML = ''; return; }
   const s = STRATS[G.list[G.idx]];
-  const key = `${G.idx}|${G.prog}|${G.badFlash > 0}|${u}`;
+  const wait = !G.enemy;
+  const key = `${G.idx}|${G.prog}|${G.badFlash > 0}|${u}|${wait}`;
   if (key === lastHud) return; lastHud = key;
   const isz = Math.round(13 * u);
   cur.innerHTML = `<i class="ic" style="${iconStyle(s, isz)}"></i><b>${s.n}</b>`;
@@ -1903,6 +1907,7 @@ function hud() {
     h += `<img src="${ARROWS[d + st]}" alt="">`;
   }
   ar.innerHTML = h;
+  ar.style.opacity = wait ? '0.3' : '1'; cur.style.opacity = wait ? '0.45' : '1';
   let n = '';
   const nsz = Math.round(8 * u);
   for (let k = G.idx + 1; k < Math.min(G.idx + 6, G.list.length); k++) n += `<i class="ic" style="${iconStyle(STRATS[G.list[k]], nsz)}"></i>`;
