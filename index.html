@@ -214,7 +214,7 @@ function updateParts(dt) {
 function drawPart(p) {
   if (p.delay > 0) return;
   const q = proj(p.x, p.y, p.z), f = p.life / p.max, s = q.s;
-  if (q.zc < 0.5 || q.y < -40 || q.x < -60 || q.x > W + 60 || q.y > H + 60) return;
+  if (q.zc < (VCAM.on && p.kind !== 'tracer' ? 1.4 : 0.5) || q.y < -40 || q.x < -60 || q.x > W + 60 || q.y > H + 60) return;   // 시점 전환 중엔 눈앞 파편은 생략
   if (p.kind === 'fire') { const pv = VCAM.on && POV && POV.kind === 'eagle', f2 = pv ? Math.min(1, f + 0.18) : f; if (f > 0.85) ctx.globalAlpha = (1 - f) / 0.15; const rr = p.r * s * (0.8 + f * 0.7); circ(q.x, q.y, rr, fireCol(f2)); ctx.globalAlpha = 1; if (f < 0.55) { glow(q.x, q.y, rr * (pv ? 1.4 : 2.2), fireCol(f2 + 0.12), (0.55 - f) * (pv ? 0.35 : 0.9)); if (!pv && Math.random() < 0.35) light(q.x, q.y, rr * 7, '#ff8a30', (0.55 - f) * 0.5); } }
   else if (p.kind === 'smoke') { ctx.globalAlpha = 0.8 * (1 - f); circ(q.x, q.y, p.r * s * (1 + f * 1.4), f < 0.35 ? '#5a5656' : '#3a3738'); ctx.globalAlpha = 1; }
   else if (p.kind === 'cloud') { ctx.globalAlpha = 0.6 * (1 - f); circ(q.x, q.y, p.r * s * (1 + f), p.col); ctx.globalAlpha = 1; }
@@ -261,8 +261,8 @@ function speedLines(x, y, n, len) { lines.push({ x, y, n, len, life: 0, max: 0.2
 function impact(level, at, sh = 0) {
   const q = at ? proj(at.x, at.y, at.z) : null;
   if (level >= 3) {
-    stopFor(0.2, true); addShake(0.7 + sh, rand(-3, 3), 5); flash(0.8); punch = Math.max(punch, 0.14); roll = rand(-1, 1) < 0 ? -2.4 : 2.4; chroma = Math.max(chroma, 0.25);
-    const now = performance.now(); if (now - lastInvert > 500) { invertF = 2; lastInvert = now; }
+    stopFor(0.2, true); addShake(0.7 + sh, rand(-3, 3), 5); flash(VCAM.on ? 0.45 : 0.8); punch = Math.max(punch, 0.14); roll = rand(-1, 1) < 0 ? -2.4 : 2.4; chroma = Math.max(chroma, 0.25);
+    const now = performance.now(); if (!VCAM.on && now - lastInvert > 500) { invertF = 2; lastInvert = now; }   // 조종석에선 반전 섬광 생략
     if (q && !VCAM.on) speedLines(q.x, q.y, 30, 120); slowmo(0.4, 0.35);
   } else if (level >= 2) {
     stopFor(0.1); addShake(0.36 + sh, rand(-1.5, 1.5), 2); flash(0.28, '#fff4d0'); punch = Math.max(punch, 0.06); chroma = Math.max(chroma, 0.12);
@@ -1326,27 +1326,48 @@ function orbitalFx(e, k) {
   beacon(fx, tx, tz, '#ff2424', 0.85);
   const mode = { 'o-precision': 'single', 'o-rail': 'rail', 'o-120': 'barrage', 'o-380': 'barrage', 'o-walking': 'walk', 'o-gatling': 'gatling', 'o-napalm': 'napalm', 'o-airburst': 'air', 'o-gas': 'gas', 'o-ems': 'ems', 'o-smoke': 'smoke', 'o-laser': 'laser' }[k] || 'single';
   const POVO = POV_ON.has(k) && (mode === 'single' || mode === 'rail');   // 구축함 → 아틀라스 캐넌 → 착탄
-  if (mode !== 'laser') fx.at(POVO ? 2.45 : 0.55, () => sfx.whistle());
+  // 장면 시각: 레일캐넌은 먼저 궤도 레이저가 표적을 잡고(약 1.2초) 구축함으로 넘어감
+  const RL = POVO && mode === 'rail', T0 = RL ? 1.55 : 0.62, T1 = T0 + 0.93, TF = T1 + 0.45, TG = T1 + 0.95, TI = TG + (RL ? 0.25 : 0.35);
+  if (mode !== 'laser') fx.at(POVO ? TG - 0.05 : 0.55, () => sfx.whistle());
   const shells = [];
   const add = (t, x, z, Rr) => shells.push({ t, x, z, R: Rr });
-  if (mode === 'single' || mode === 'rail' || mode === 'gas' || mode === 'ems' || mode === 'smoke') add(POVO ? 2.85 : 0.82, tx, tz, mode === 'single' ? 1.9 : mode === 'rail' ? 1.6 : 0.6);
+  if (mode === 'single' || mode === 'rail' || mode === 'gas' || mode === 'ems' || mode === 'smoke') add(POVO ? TI : 0.82, tx, tz, mode === 'single' ? 1.9 : mode === 'rail' ? 1.6 : 0.6);
   if (POVO) {
-    fx.end = 4.2; let op = null;
-    fx.at(0.62, () => { op = { kind: 'orbit', fx, e, space: true, shot: 1 }; enterPOV(op); });
-    fx.at(1.55, () => { if (!op) return; op.shot = 2; op.t = 0; op.fireAt = 0.45; flash(0.5, '#ffffff'); nz({ type: 'bandpass', f: 900, f2: 200, d: 0.25, v: 0.15 }); });
-    fx.at(2.0, () => { osc({ f: 70, f2: 28, d: 0.9, v: 0.5, dist: true }); nz({ type: 'lowpass', f: 1600, f2: 120, d: 1.1, v: 0.45 }); addShake(0.8, -4, 6); stopFor(0.08, true); flash(0.35, '#fff0d0'); });
-    fx.at(2.5, () => { if (!op) return; op.space = false; op.ground = true; op.t = 0; op.hideLouis = true; flash(0.6, '#ffffff');
-      op.cam = P => { const a = clamp(P.t / 0.35, 0, 1), sh = fx.t < 2.85 ? a * a * 0.06 : 0;   // 다가올수록 화면을 당기고 떨림
+    fx.end = TI + 1.35; let op = null;
+    const LS = { x: tx + 16, y: 80, z: tz + 46 };   // 궤도 레이저가 내려오는 방향 (하늘 오른쪽 뒤)
+    const dotAt = () => { const a = aimOf(e), j = RL ? clamp(1 - (fx.t - 0.35) / 0.75, 0, 1) : 0; return { x: a.x + Math.sin(fx.t * 17) * 0.9 * j, y: a.y + Math.cos(fx.t * 13) * 0.6 * j, z: a.z }; };
+    if (RL) {   // 1) 조준: 빨간 레이저가 하늘에서 내려와 흔들리다 표적에 고정
+      [0.35, 0.6, 0.8, 0.94, 1.04, 1.12, 1.18].forEach(t => fx.at(t, () => osc({ f: 1650, d: 0.045, v: 0.1, type: 'square' })));
+      fx.at(1.24, () => { osc({ f: 1250, f2: 1250, d: 0.28, v: 0.12, type: 'square' }); osc({ f: 2500, d: 0.28, v: 0.05, type: 'sine' }); });
+      fx.drawers2 = () => {
+        if (fx.t < 0.32 || (op && !op.ground) || fx.t > TI) return;
+        const d = dotAt(), a = proj(d.x, d.y, d.z), b = proj(LS.x, LS.y, LS.z), lock = fx.t > 1.22, fl = 0.75 + Math.sin(fx.t * 60) * 0.25;
+        if (a.zc < 0.6) return;
+        ctx.globalAlpha = 0.35 * fl; line(b.x, b.y, a.x, a.y, '#ff2424', 2.2); ctx.globalAlpha = fl; line(b.x, b.y, a.x, a.y, '#ff8a8a', 0.7); ctx.globalAlpha = 1; glowLine(b.x, b.y, a.x, a.y, '#ff2424', 0.9);
+        glow(a.x, a.y, 5 + fl * 2, '#ff3a3a', 1); circ(a.x, a.y, 1.2, '#ffe0e0'); light(a.x, a.y, 50, '#ff3a2a', 0.9);
+        if (!(op && op.ground)) {   // 조준 틀이 좁혀지며 고정
+          const t0 = aimOf(e), q = proj(t0.x, t0.y, t0.z), sz = Math.max(14, e.def.h * q.s) * (1 + 1.4 * clamp(1 - (fx.t - 0.35) / 0.85, 0, 1));
+          bracket(q.x, q.y, sz * 1.1, sz, lock ? '#ff3a2a' : '#ff8a8a', 5);
+          if (lock && ((fx.t * 8) | 0) % 2) hudText('표적 고정', q.x + sz * 0.6 + 3, q.y - sz * 0.45, '#ff3a2a', 6);
+          else if (!lock) hudText('궤도 조준 중', q.x + sz * 0.6 + 3, q.y - sz * 0.45, '#ff8a8a', 5);
+        }
+      };
+    }
+    fx.at(T0, () => { op = { kind: 'orbit', fx, e, space: true, shot: 1, rail: RL }; enterPOV(op); });
+    fx.at(T1, () => { if (!op) return; op.shot = 2; op.t = 0; op.fireAt = 0.45; flash(0.5, '#ffffff'); nz({ type: 'bandpass', f: 900, f2: 200, d: 0.25, v: 0.15 }); });
+    fx.at(TF, () => { osc({ f: RL ? 110 : 70, f2: 28, d: 0.9, v: 0.5, dist: true }); nz({ type: 'lowpass', f: RL ? 3200 : 1600, f2: 120, d: 1.1, v: 0.45 }); if (RL) nz({ type: 'bandpass', f: 4000, f2: 600, d: 0.35, v: 0.2 }); addShake(0.8, -4, 6); stopFor(0.08, true); flash(0.35, RL ? '#d8e8ff' : '#fff0d0'); });
+    fx.at(TG, () => { if (!op) return; op.space = false; op.ground = true; op.t = 0; op.hideLouis = true; flash(0.6, '#ffffff');
+      op.cam = P => { const a = clamp(P.t / (TI - TG), 0, 1), sh = fx.t < TI ? a * a * 0.06 : 0;   // 다가올수록 화면을 당기고 떨림
         setVC({ on: true, x: tx + 1.1 + P.t * 0.25 + rand(-1, 1) * sh, y: 1.0 + rand(-1, 1) * sh, z: tz - 10.5 + P.t * 0.4, pitch: -0.16, cy: H * 0.56, f: FOCAL * (1 + 0.28 * a * a) }); }; });
-    fx.at(2.72, () => { if (!op) return; for (let i = 0; i < 26; i++) { const a = i / 26 * 6.283, v = rand(3, 6); P3({ x: tx + Math.cos(a) * 0.4, y: 0.1, z: tz + Math.sin(a) * 0.3, vx: Math.cos(a) * v, vy: rand(0.2, 0.8), vz: Math.sin(a) * v * 0.6, drag: 2.4, kind: 'smoke', max: rand(0.5, 0.9), r: rand(0.15, 0.35) }); } });   // 풍압에 먼지가 먼저 밀려남
-    fx.at(2.85, () => { slowmo(0.7, 0.25); });
-    fx.at(3.75, () => { if (POV && POV.fx === fx) exitPOV(); });
-    fx.drawers.push(() => { if (!(op && op.ground) || fx.t > 2.85) return; const k2 = clamp((fx.t - 2.5) / 0.35, 0, 1), y = 70 * (1 - k2 * k2), a = proj(tx, y, tz), b = proj(tx, y + 40, tz), m = proj(tx, y + 6, tz);
-      const w = Math.max(2, a.s * 0.14);   // 포탄 꼬리 · 충격파 원뿔 · 머리 빛
-      ctx.globalAlpha = 0.5; line(b.x, b.y, a.x, a.y, '#ffe8b0', w * 2.2); ctx.globalAlpha = 1; line(m.x, m.y, a.x, a.y, '#ffffff', w); glowLine(b.x, b.y, a.x, a.y, '#ffb060', 1);
+    fx.at(TI - 0.13, () => { if (!op) return; for (let i = 0; i < 26; i++) { const a = i / 26 * 6.283, v = rand(3, 6); P3({ x: tx + Math.cos(a) * 0.4, y: 0.1, z: tz + Math.sin(a) * 0.3, vx: Math.cos(a) * v, vy: rand(0.2, 0.8), vz: Math.sin(a) * v * 0.6, drag: 2.4, kind: 'smoke', max: rand(0.5, 0.9), r: rand(0.15, 0.35) }); } });   // 풍압에 먼지가 먼저 밀려남
+    fx.at(TI, () => { slowmo(0.7, 0.25); });
+    fx.at(TI + 0.9, () => { if (POV && POV.fx === fx) exitPOV(); });
+    fx.drawers.push(() => { if (!(op && op.ground) || fx.t > TI) return; const k2 = clamp((fx.t - TG) / (TI - TG), 0, 1), y = 70 * (1 - k2 * k2), a = proj(tx, y, tz), b = proj(tx, y + 40, tz), m = proj(tx, y + 6, tz);
+      const w = Math.max(2, a.s * 0.14), C1 = RL ? '#d8e8ff' : '#ffe8b0', C2 = RL ? '#7ab8ff' : '#ffb060';   // 포탄 꼬리 · 충격파 원뿔 · 머리 빛
+      ctx.globalAlpha = 0.5; line(b.x, b.y, a.x, a.y, C1, w * 2.2); ctx.globalAlpha = 1; line(m.x, m.y, a.x, a.y, '#ffffff', w); glowLine(b.x, b.y, a.x, a.y, C2, 1);
       ctx.globalAlpha = 0.4; line(a.x, a.y, m.x - w * 3, m.y, '#ffffff', 0.8); line(a.x, a.y, m.x + w * 3, m.y, '#ffffff', 0.8); ctx.globalAlpha = 1;
-      glow(a.x, a.y, 8 + 10 * k2, '#ffffff', 1); light(a.x, a.y, 90 + 120 * k2, '#ffe0a0', 0.6 + 0.6 * k2);
-      const g0 = proj(tx, 0, tz); light(g0.x, g0.y, 60 + 80 * k2, '#ffd8a0', k2 * 0.7); });
+      glow(a.x, a.y, 8 + 10 * k2, '#ffffff', 1); light(a.x, a.y, 90 + 120 * k2, RL ? '#c0d8ff' : '#ffe0a0', 0.6 + 0.6 * k2);
+      const g0 = proj(tx, 0, tz); light(g0.x, g0.y, 60 + 80 * k2, RL ? '#c0d8ff' : '#ffd8a0', k2 * 0.7); });
   }
   else if (mode === 'barrage') { const n = k === 'o-380' ? 7 : 6, big = k === 'o-380'; for (let i = 0; i < n; i++) add(0.8 + i * (big ? 0.26 : 0.2), i === 0 ? tx : tx + rand(-1.8, 1.8) * (big ? 1.3 : 1), i === 0 ? tz : tz + rand(-1.5, 2) * (big ? 1.3 : 1), big ? 1.5 : 0.95); }
   else if (mode === 'walk') { for (let i = 0; i < 6; i++) add(0.8 + i * 0.22, tx + rand(-0.5, 0.5), tz - 2.5 + i * 1.0, 1.0); }
@@ -1405,8 +1426,10 @@ function eagleFx(e, k) {
   beacon(fx, tx, tz, '#ff2424', 1.2);
   const mode = { 'e-strafe': 'strafe', 'e-air': 'line', 'e-cluster': 'cluster', 'e-napalm': 'napalm', 'e-smoke': 'smoke', 'e-rocket': 'rocket', 'e-500': '500', 'e-gas': 'gas' }[k] || 'line';
   const BOMB = ['line', 'cluster', 'napalm', 'smoke', '500', 'gas'].includes(mode);   // 폭격: 던진 방향에 가로로 지나가며 떨굼 (기총소사·로켓은 세로)
-  const POVE = POV_ON.has(k) && BOMB;                                                   // 이글 조종석 시점
+  const POVE = POV_ON.has(k), LONG = !BOMB;                                              // 이글 조종석 시점 (기총소사·로켓은 세로로 진입)
+  const LABEL = { line: '공중타격', strafe: '기총소사', rocket: '110mm 로켓', '500': '500kg 폭탄', napalm: '네이팜', smoke: '연막', gas: '가스', cluster: '집속탄' }[mode];
   const jet = { x: tx * 0.6 + 0.4, y: 3.8, z: 0.8, vx: 0, vz: 26, on: false };
+  if (POVE && LONG) Object.assign(jet, { x: tx, y: 11, z: tz - 62, vx: 0, vz: 30 });
   if (BOMB) Object.assign(jet, POVE ? { x: tx - 70, y: 14, z: tz, vx: 30, vz: 0 } : { x: tx - 30, y: 3.1, z: tz + 2.6, vx: 32, vz: 0 });
   if (POVE) fx.end = 5.6; else if (BOMB) fx.end = 3.2;
   const bombs = [], rockets = []; let done = false, doneT = 0, nextB = 0, passed = false;
@@ -1427,22 +1450,23 @@ function eagleFx(e, k) {
   fx.at(0.4, () => { jet.on = true; sfx.jet(); });
   let pv = null;
   if (POVE) fx.at(0.45, () => {
-    const cl = []; for (let i = 0; i < 26; i++) { const x = tx - 72 + i * 1.9 + rand(-1, 1); if (x > tx - 30) continue; cl.push({ x, y: rand(9.5, 12.5), z: tz + (i % 2 ? 1 : -1) * rand(1, 8), r: rand(2, 4.2), a: 0.5 }); }
-    const city = []; for (const sd of [-1, 1]) for (let x = tx - 80; x < tx + 70;) { const w = rand(3, 6.5), d = rand(3, 6), gap = rand(0.8, 2.6);   // 비행 경로 양옆으로 건물 (목표 근처는 비움)
+    const cl = []; for (let i = 0; i < 26; i++) { const u = -72 + i * 1.9 + rand(-1, 1), o = (i % 2 ? 1 : -1) * rand(1, 8); if (u > -30) continue; cl.push(LONG ? { x: tx + o, y: rand(8.5, 11.5), z: tz + u, r: rand(2, 4.2), a: 0.5 } : { x: tx + u, y: rand(9.5, 12.5), z: tz + o, r: rand(2, 4.2), a: 0.5 }); }
+    const city = LONG ? null : []; if (!LONG) for (const sd of [-1, 1]) for (let x = tx - 80; x < tx + 70;) { const w = rand(3, 6.5), d = rand(3, 6), gap = rand(0.8, 2.6);   // 비행 경로 양옆으로 건물 (목표 근처는 비움)
       if (Math.abs(x + w / 2 - tx) > 9) city.push({ x: x + w / 2, z: tz + sd * (4.2 + d / 2 + rand(0, 1.5)), w, d, h: rand(3, 9.5), lit: Math.random() }); x += w + gap; }
     nz({ type: 'highpass', f: 900, f2: 1600, d: 4.2, v: 0.12 });   // 바람
-    pv = { kind: 'eagle', fx, e, hideLouis: true, tx, tz, spd: jet.vx, hits: 0, rel: 0, kick: 0, boost: 0, clouds: cl, city, speed: 1, zoom: 0,
+    pv = { kind: 'eagle', fx, e, hideLouis: true, tx, tz, spd: jet.vx || jet.vz, hits: 0, rel: 0, kick: 0, boost: 0, clouds: cl, city, speed: 1, zoom: 0, label: LABEL,
       cam: P => {
-        const ahead = tx - jet.x, look = Math.atan2(jet.y - 0.4, Math.max(0.5, ahead + 0.8));   // 목표를 화면 가운데에
+        if (!e.dead) { const a0 = aimOf(e); P.tx = a0.x; P.tz = a0.z; }
+        const ahead = LONG ? P.tz - jet.z : P.tx - jet.x, look = Math.atan2(jet.y - 0.4, Math.max(0.5, ahead + 0.8));   // 목표를 화면 가운데에
         const up = done ? clamp((fx.t - doneT - 0.35) / 0.8, 0, 1) : 0, us = up * up * (3 - 2 * up);
         const pitch = lerp(clamp(look, 0.22, 1.25), -0.1, us);
         P.zoom = lerp(P.zoom, P.hits > 0 && !(done && fx.t > doneT + 0.45) ? 1 : 0, 0.12);   // 착탄 순간 화면을 당겨 맞는 걸 보여 줌
         P.kick = Math.max(0, P.kick - 0.05);
         P.roll = Math.sin(fx.t * 2.3) * 0.012 + P.kick * 0.025 * Math.sin(fx.t * 47) - us * 0.07;
         const buf = (hash2((fx.t * 50) | 0, 3, 5) - 0.5) * (0.05 + P.kick * 0.25);
-        setVC({ on: true, x: jet.x, y: jet.y + buf, z: jet.z, yaw: Math.PI / 2, pitch, cy: H * 0.5, f: FOCAL * (0.8 + 0.3 * P.zoom - 0.08 * P.boost) });
-        P.spd = jet.vx; P.speed = 1.2 + jet.vx / 30 + P.boost * 0.9;
-        const fq = proj(jet.x + 300, jet.y + (done && fx.t > doneT + 0.6 ? 40 : -12), jet.z); P.foe = [fq.x, fq.zc > 0.6 ? fq.y : -H];
+        setVC({ on: true, x: jet.x, y: jet.y + buf, z: jet.z, yaw: LONG ? 0 : Math.PI / 2, pitch, cy: H * 0.5, f: FOCAL * (0.8 + 0.3 * P.zoom - 0.08 * P.boost) });
+        const vv = LONG ? jet.vz : jet.vx; P.spd = vv; P.speed = 1.2 + vv / 30 + P.boost * 0.9;
+        const fy = jet.y + (done && fx.t > doneT + 0.6 ? 40 : -12), fq = LONG ? proj(jet.x, fy, jet.z + 300) : proj(jet.x + 300, fy, jet.z); P.foe = [fq.x, fq.zc > 0.6 ? fq.y : -H];
       } };
     enterPOV(pv);
   });
@@ -1472,7 +1496,10 @@ function eagleFx(e, k) {
   fx.tick = dt => {
     if (jet.on) {
       jet.x += jet.vx * dt; jet.z += jet.vz * dt;
-      if (!BOMB) jet.y = Math.max(2.6, jet.y - dt * 0.6);
+      if (!BOMB && !POVE) jet.y = Math.max(2.6, jet.y - dt * 0.6);
+      else if (POVE && LONG) { if (!done) jet.y = Math.max(4.4, jet.y - dt * 5.5); else if (fx.t > doneT + 0.35) jet.y += dt * (fx.t - doneT - 0.35) * 12;
+        if (done && fx.t > doneT + 0.3) { pv && (pv.boost = Math.min(1, pv.boost + dt * 2)); jet.vz = Math.min(42, jet.vz + dt * 14); }
+        if (done && fx.t > doneT + 1.45 && POV && POV.fx === fx) exitPOV(); }
       else if (POVE) { if (nextB < plan.length) jet.y = Math.max(6.4, jet.y - dt * 6.5); else if (!done) jet.y = Math.max(5.8, jet.y - dt * 0.8); else if (done && fx.t > doneT + 0.35) jet.y += dt * (fx.t - doneT - 0.35) * 12;
         if (done && fx.t > doneT + 0.3) { pv && (pv.boost = Math.min(1, pv.boost + dt * 2)); jet.vx = Math.min(42, jet.vx + dt * 14); }
         if (done && fx.t > doneT + 1.45 && POV && POV.fx === fx) exitPOV(); }
@@ -1483,22 +1510,23 @@ function eagleFx(e, k) {
       }
       if (BOMB && !POVE && !passed && jet.x > tx - 5) { passed = true; nz({ type: 'bandpass', f: 2600, f2: 500, d: 0.55, v: 0.24 }); addShake(0.22); }
     }
-    if (mode === 'strafe' && jet.on && jet.z > tz - 14 && jet.z < tz + 1 && Math.random() < 0.85) {
-      const gz = jet.z + 8 + rand(-0.5, 0.5), gx = tx + rand(-0.6, 0.6);
-      tracer3({ x: jet.x, y: jet.y - 0.2, z: jet.z }, { x: gx, y: 0, z: gz }, '#ffd630', 0.1);
+    if (mode === 'strafe' && jet.on && jet.z > tz - (POVE ? 21 : 14) && jet.z < tz + 1 && !done && Math.random() < 0.85) {
+      const az = e.dead ? tz : aimOf(e).z, gz = jet.z + (POVE ? 10.5 : 8) + rand(-0.5, 0.5), gx = (e.dead ? tx : aimOf(e).x) + rand(-0.6, 0.6);   // 밀려난 적을 따라감
+      tracer3(POVE ? { x: jet.x + rand(-0.4, 0.4), y: jet.y - 0.8, z: jet.z + 1.6 } : { x: jet.x, y: jet.y - 0.2, z: jet.z }, { x: gx, y: 0, z: gz }, '#ffd630', POVE ? 0.12 : 0.1);
+      if (pv) { pv.kick = Math.max(pv.kick, 0.35); if (Math.abs(gz - az) < 1.5) { if (!pv.hits) slowmo(0.6, 0.4); pv.hits++; } }
       if (Math.random() < 0.4) { sfx.eagleGun(); sparks3(gx, 0.1, gz, 5, ['#ffd630', '#ff8c1e']); P3({ x: gx, y: 0.2, z: gz, kind: 'smoke', max: 0.5, r: 0.15 }); }
-      if (Math.abs(gz - tz) < 1.5) areaHit(e, gx, gz, 1.0, 1);
-      if (gz > tz + 2.2) finish(2);
+      if (Math.abs(gz - az) < 1.5) areaHit(e, gx, gz, 1.0, 1);
+      if (gz > az + 2.2) finish(2);
     }
-    if (mode === 'rocket' && jet.on && rockets.length < 2 && jet.z > tz - 16) {
-      const i = rockets.length; GUN.rocketPod();
-      rockets.push({ x: jet.x + (i ? 0.5 : -0.5), y: jet.y - 0.3, z: jet.z, x1: tx + (i ? 0.3 : -0.3), z1: tz, t: 0, dur: 0.4 });
+    if (mode === 'rocket' && jet.on && rockets.length < 2 && jet.z > tz - (POVE ? 27 + rockets.length * -1.2 : 16)) {
+      const i = rockets.length; GUN.rocketPod(); if (pv) { pv.rel = pv.rel || pv.t; pv.kick = 0.8; }
+      rockets.push(POVE ? { x: jet.x + (i ? 1.1 : -1.1), y: jet.y - 0.7, z: jet.z + 1.2, x1: tx + (i ? 0.3 : -0.3), z1: tz, t: 0, dur: 0.62 } : { x: jet.x + (i ? 0.5 : -0.5), y: jet.y - 0.3, z: jet.z, x1: tx + (i ? 0.3 : -0.3), z1: tz, t: 0, dur: 0.4 });
     }
     for (const r of rockets) {
       if (r.hit) continue; r.t += dt; const kk = clamp(r.t / r.dur, 0, 1);
       r.cx = lerp(r.x, r.x1, kk); r.cy = lerp(r.y, 0.3, kk); r.cz = lerp(r.z, r.z1, kk);
       P3({ x: r.cx, y: r.cy, z: r.cz, kind: 'smoke', max: 0.5, r: 0.12 });
-      if (kk >= 1) { r.hit = true; boom3(r.cx, r.cz, 1.1); if (rockets.every(q => q.hit) && rockets.length === 2) finish(3); else areaHit(e, r.cx, r.cz, 1.5); }
+      if (kk >= 1) { r.hit = true; if (pv) { if (!pv.hits) slowmo(0.7, 0.35); pv.hits++; pv.kick = 1; } boom3(r.cx, r.cz, 1.1, pv ? { quiet: true } : {}); if (rockets.every(q => q.hit) && rockets.length === 2) finish(3); else areaHit(e, r.cx, r.cz, 1.5); }
     }
     for (const b of bombs) {
       if (b.hit) continue; b.age += dt; const u = Math.min(1, b.age / b.tf);
@@ -1515,7 +1543,7 @@ function eagleFx(e, k) {
       if (qt.zc < 0.6) { rect(q.x - k / 2, q.y - k / 2, k, k, '#2c3038'); continue; }
       line(qt.x, qt.y, q.x, q.y, '#2c3038', k); line(qt.x, qt.y, q.x, q.y, '#8a94a0', k * 0.35); rect(qt.x - k * 0.6, qt.y - k * 0.6, k * 1.2, k * 1.2, '#ffd630');
     }
-    for (const r of rockets) if (!r.hit && r.cx != null) { const q = proj(r.cx, r.cy, r.cz), k = Math.max(1, q.s * 0.06); rect(q.x - k / 2, q.y - k / 2, k, k, '#c4ccd6'); rect(q.x - k / 2, q.y + k / 2, k, 1, '#ff8c1e'); }
+    for (const r of rockets) if (!r.hit && r.cx != null) { const q = proj(r.cx, r.cy, r.cz); if (q.zc < 1) continue; const k = clamp(q.s * 0.06, 1, 4); glow(q.x, q.y + k, 3 + k, '#ff8c1e', 0.8); rect(q.x - k / 2, q.y - k / 2, k, k, '#c4ccd6'); rect(q.x - k / 2, q.y + k / 2, k, 1, '#ff8c1e'); }
   });
   fx.jet = () => jet.on && !(POV && POV.fx === fx) && (BOMB ? jet.x < tx + 45 : jet.z < 90) ? { z: jet.z, x: jet.x, draw: () => {
     if (!BOMB) { drawObj(SPR_JET, jet.x, jet.y, jet.z, 0.11); const q = proj(jet.x, jet.y, jet.z); if (((fx.t * 20) | 0) % 2) rect(q.x - 1, q.y + 1, 2, 1, '#ffd630'); return; }
@@ -1926,10 +1954,17 @@ function vehicleFx(k, e) {
   fx.at(LAND, () => { v.landed = true; v.y = 0; st.sq = 1; sfx.slam(1.35); stopFor(0.14, true); addShake(0.7, 0, 6); flash(0.55); punch = Math.max(punch, 0.08); dust3(v.x, v.z, 22, 1.2); decals.push({ kind: 'ring', x: v.x, z: v.z, r: 0.5, grow: 8, life: 0, max: 0.5 }); decals.push({ kind: 'scorch', x: v.x, z: v.z, r: 1.3, life: 0, max: 14 }); });
   fx.at(LAND + 0.18, () => { v.frame = false; GUN.hiss(); for (let i = 0; i < 10; i++) P3({ x: v.x + (i % 2 ? 1.4 : -1.4), y: rand(0.5, 2.5), z: v.z, vx: (i % 2 ? 1 : -1) * rand(2, 4), vy: rand(3, 6), vz: rand(-1, 1), g: 16, kind: 'debris', max: 1.2, col: pick([VC.l, VC.m, VC.y]) }); if (V.t === 'exo') GUN.exoStep(); });
 
-  if (POVX) {
-    fx.at(LAND + 0.3, () => enterPOV({ kind: 'exo', fx, e, hideLouis: true, tipL: W3(-0.75, 1.3, 0.4), tipR: W3(0.5, 2.4, 0),
-      cam: P => { const ft = fx.t - A; P.spin = ft > 0.3 && ft < 0.95 ? (fx.t * 9) % 1 : (P.spin || 0); P.shots = clamp((ft - 0.32) / 0.034, 0, 16); P.heat = P.shots / 16 * 0.9; P.rk = ft > 0.95 && ft < 1.4 ? 1 : 0;
-        const bob = Math.sin(fx.t * 2.2) * 0.03, a0 = aimOf(e), zoom = clamp((a0.z - v.z) / 9, 1.2, 2.6); setVC({ on: true, x: v.x + (a0.x - v.x) * 0.15, y: 2.5 + bob, z: v.z - 0.2, pitch: -0.02, cy: HZ + 6, f: FOCAL * zoom }); }, ground: true }));
+  if (POVX) {   // 무장별 조종석: [왼팔, 오른팔, 이름, 사격 시간]
+    const ARM = { patriot: ['gatling', 'pod', 'EXO-45 PATRIOT', 1.4], eman: ['ac', 'ac', 'EXO-49 EMANCIPATOR', 1.0], lumber: ['atc', 'flame', 'EXO · 벌목꾼', 1.1], break: ['shield', 'flak', 'EXO · 돌파구', 0.8] }[V.arm] || ['gatling', 'pod', 'EXO-45 PATRIOT', 1.4];
+    const pat = V.arm === 'patriot';
+    fx.at(LAND + 0.3, () => enterPOV({ kind: 'exo', fx, e, hideLouis: true, armL: ARM[0], armR: ARM[1], title: ARM[2], tipL: pat ? W3(-0.75, 1.3, 0.4) : W3(-0.85, 1.35, 0.5), tipR: pat ? W3(0.5, 2.4, 0) : W3(0.85, 1.35, 0.5), ground: true,
+      cam: P => {
+        const ft = fx.t - A;
+        if (pat) { P.spin = ft > 0.3 && ft < 0.95 ? (fx.t * 9) % 1 : (P.spin || 0); P.shots = clamp((ft - 0.32) / 0.034, 0, 16); P.heat = P.shots / 16 * 0.9; P.rk = ft > 0.95 && ft < 1.4 ? 1 : 0; }
+        else { P.tipL = W3(-0.85, 1.35, 0.5); P.tipR = W3(0.85, 1.35, 0.5); const q = clamp(ft / ARM[3], 0, 1); P.ammo = 1 - q * 0.7; P.heat = q * 0.7 + (V.arm === 'lumber' && ft > 0.5 && ft < 1.1 ? 0.25 : 0);
+          P.rL = (st.r0 || 0) / 3; P.rR = (st.r1 || 0) / 3; P.bash = V.arm === 'break' && ft > 0.6 && ft < 1.0 ? Math.sin((ft - 0.6) / 0.4 * Math.PI) : 0; }
+        const walk = st.walk ? Math.abs(Math.sin(fx.t * 13)) * 0.14 : 0, bob = Math.sin(fx.t * 2.2) * 0.03 - walk, a0 = aimOf(e), back = V.arm === 'break' ? 1.6 : 0.2, zoom = clamp((a0.z - v.z) / 9, 1.2, 2.6); P.walk = walk;
+        setVC({ on: true, x: v.x + (a0.x - v.x) * 0.15, y: 2.5 + bob, z: v.z - back + (P.bash || 0) * 0.5, pitch: -0.02, cy: HZ + 6, f: FOCAL * zoom }); } }));
   }
   if (V.arm === 'patriot') {
     fx.at(A, () => GUN.spin(0.32));
@@ -2030,8 +2065,8 @@ const SPACE = {}; for (const k in SPACE_IMG) { const im = new Image(); im.src = 
    - 맞는 순간을 가리지 않도록 카메라 자체를 옮김
    ============================================================ */
 const POV_Q = new URLSearchParams(location.search);
-const POV_ON = new Set(['v-patriot', 'e-air', 'o-precision', 'o-rail']);   // 시험: 하나씩
-if (POV_Q.get('pov') === 'all') ['v-emancipator', 'v-lumberer', 'v-breakthrough', 'e-cluster', 'e-napalm', 'e-500', 'e-smoke', 'e-gas', 'o-120', 'o-380'].forEach(k => POV_ON.add(k));
+const POV_KEYS = ['v-patriot', 'v-emancipator', 'v-lumberer', 'v-breakthrough', 'e-air', 'e-strafe', 'e-rocket', 'e-500', 'e-cluster', 'e-napalm', 'e-smoke', 'e-gas', 'o-precision', 'o-rail'];
+const POV_ON = new Set(POV_KEYS);   // 엑소 4종 · 이글 8종 · 궤도 정밀/레일
 if (POV_Q.get('pov') === 'off') POV_ON.clear();
 let POV = null;
 function enterPOV(o) { o.t = 0; POV = o; setVC({ yaw: 0, f: FOCAL }); camReset(); document.body.classList.add('cine'); flash(0.7, '#ffffff'); nz({ type: 'bandpass', f: 1800, f2: 300, d: 0.35, v: 0.22 }); }
@@ -2132,11 +2167,44 @@ const AMB = '#ffc23a';
 function hudText(s, x, y, col = AMB, size = 5, align = 'left') { ctx.font = `bold ${size}px monospace`; ctx.textAlign = align; ctx.fillStyle = col; ctx.fillText(s, x, y); ctx.textAlign = 'left'; }
 function bracket(x, y, w, h, col, k = 4) { for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const cx = x + sx * w / 2, cy = y + sy * h / 2; rect(cx - (sx > 0 ? k : 0), cy - (sy > 0 ? 0.5 : 0), k, 0.5, col); rect(cx - (sx > 0 ? 0.5 : 0), cy - (sy > 0 ? k : 0), 0.5, k, col); } }
 function poly(pts, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1]); ctx.closePath(); ctx.fill(); }
+// 팔 하나: 화면 아래 구석에서 포구(세계 좌표)까지 뻗은 원통 (반동 r 만큼 당겨짐)
+function exoArm(bx, by, tp, w0, w1, col, hi, r = 0) {
+  const ax = tp.x + (bx - tp.x) * r * 0.07, ay = tp.y + (by - tp.y) * r * 0.07, nx = -(ay - by), ny = ax - bx, nl = Math.hypot(nx, ny) || 1;
+  const a0x = nx / nl * w0, a0y = ny / nl * w0, a1x = nx / nl * w1, a1y = ny / nl * w1;
+  poly([[bx - a0x, by - a0y], [bx + a0x, by + a0y], [ax + a1x, ay + a1y], [ax - a1x, ay - a1y]], col);
+  poly([[bx - a0x, by - a0y], [bx - a0x * 0.55, by - a0y * 0.55], [ax - a1x * 0.55, ay - a1y * 0.55], [ax - a1x, ay - a1y]], hi);
+  return { ax, ay, a1x, a1y, a0x, a0y, at: (k, w) => [bx + (ax - bx) * k, by + (ay - by) * k] };
+}
+function exoWeapon(type, side, tp, P) {
+  const bx = side < 0 ? -14 : W + 14, by = H + 20, r = side < 0 ? (P.rL || 0) : (P.rR || 0);
+  if (type === 'ac' || type === 'flak') {   // 기관포 · 대공포: 굵은 포신 + 포구 제퇴기
+    const A = exoArm(bx, by, tp, 24, 6.5, '#1c1f26', '#6a7484', r); const [mx, my] = A.at(0.35);
+    if (type === 'flak') { circ(mx, my, 13, '#262a33'); circ(mx, my, 9, '#3a404c'); rect(mx - 9, my - 1, 18, 2, '#ffd630'); }
+    rect(A.ax - A.a1x * 1.6 - 1, A.ay - 5, Math.abs(A.a1x) * 3.2 + 2, 10, '#2a2e36'); circ(A.ax, A.ay, 5.5, '#2a2e36'); circ(A.ax, A.ay, 2.8, '#07080d');
+    if (r > 0.3) glow(A.ax, A.ay, 10 * r, '#ffc060', r * 0.8);
+  } else if (type === 'atc') {               // 대전차포: 더 굵고 경고 띠
+    const A = exoArm(bx, by, tp, 32, 9, '#1a1c22', '#5e6676', r); const [hx, hy] = A.at(0.82);
+    for (let i = 0; i < 4; i++) { const [px, py] = A.at(0.7 + i * 0.03); circ(px, py, 9 - i, i % 2 ? '#1a1c22' : '#ffd630'); }
+    circ(A.ax, A.ay, 8.5, '#2a2e36'); circ(A.ax, A.ay, 4.5, '#07080d'); if (r > 0.3) glow(A.ax, A.ay, 16 * r, '#ffc060', r);
+  } else if (type === 'flame') {             // 화염방사기: 가는 노즐 + 파란 점화 불꽃
+    const A = exoArm(bx, by, tp, 20, 5, '#2a2620', '#7a6a50', 0); const [tx2, ty2] = A.at(0.4);
+    rect(tx2 - 6, ty2 - 10, 12, 20, '#3a332a'); rect(tx2 - 6, ty2 - 10, 12, 2, '#ff6a2a');
+    circ(A.ax, A.ay, 4, '#1a1612'); glow(A.ax, A.ay, 5 + Math.sin(P.t * 40) * 1.5, '#5ab0ff', 0.9);
+  } else if (type === 'shield') {            // 방패: 왼쪽을 가리는 판 (돌진 때 앞으로)
+    const b = P.bash || 0, dx = b * 30, dy = -b * 18;
+    poly([[0, 70 + dy], [58 + dx, 78 + dy], [72 + dx, H], [0, H]], '#262a33'); poly([[0, 70 + dy], [58 + dx, 78 + dy], [59 + dx, 82 + dy], [0, 74 + dy]], '#8a94a0');
+    for (let i = 0; i < 5; i++) poly([[52 + dx + i * 0, 90 + dy + i * 18], [60 + dx, 86 + dy + i * 18], [63 + dx, 96 + dy + i * 18], [55 + dx, 100 + dy + i * 18]], i % 2 ? '#1a1c22' : '#ffd630');
+    rect(18 + dx * 0.5, 110 + dy, 14, 22, '#1a1c22'); rect(20 + dx * 0.5, 112 + dy, 10, 3, '#5ac4ff');
+  }
+}
 function drawExoCockpit(P) {
   const t = P.t, e = P.e, boot = clamp(t / 0.35, 0, 1), sp = P.spin || 0;
+  // 팔은 조종석에 붙은 부품: 화면 확대와 상관없이 같은 자리 (걸음·반동만큼 흔들림)
+  const sw = Math.sin(t * 2.2) * 1.5 + (P.walk || 0) * 10, tipL = { x: 74, y: 112 + sw }, tipR = P.armR === 'pod' || !P.armR ? { x: 262, y: 38 + sw } : { x: 246, y: 112 + sw };
+  if (P.armL && P.armL !== 'gatling') exoWeapon(P.armL, -1, tipL, P);
+  if (P.armR && P.armR !== 'pod') exoWeapon(P.armR, 1, tipR, P);
   // 왼팔 개틀링 (아래 왼쪽에서 앞으로 뻗음)
-  const tipL = proj(P.tipL.x, P.tipL.y, P.tipL.z), tipR = proj(P.tipR.x, P.tipR.y, P.tipR.z);
-  { const bx = -14, by = H + 20, ax = tipL.x, ay = tipL.y, nx = -(ay - by), ny = ax - bx, nl = Math.hypot(nx, ny), w0 = 26, w1 = 7;
+  if (!P.armL || P.armL === 'gatling') { const bx = -14, by = H + 20, ax = tipL.x, ay = tipL.y, nx = -(ay - by), ny = ax - bx, nl = Math.hypot(nx, ny), w0 = 26, w1 = 7;
     const o = (w) => [nx / nl * w, ny / nl * w];
     const [a0x, a0y] = o(w0), [a1x, a1y] = o(w1);
     poly([[bx - a0x, by - a0y], [bx + a0x, by + a0y], [ax + a1x, ay + a1y], [ax - a1x, ay - a1y]], '#1c1f26');
@@ -2144,7 +2212,7 @@ function drawExoCockpit(P) {
     poly([[bx - a0x, by - a0y], [bx - a0x * 0.6, by - a0y * 0.6], [ax - a1x * 0.6, ay - a1y * 0.6], [ax - a1x, ay - a1y]], '#7a8496');
     circ(ax, ay, w1 * 0.9, '#2a2e36'); circ(ax, ay, w1 * 0.45, '#07080d'); }
   // 오른쪽 어깨 로켓 포드
-  { const x = tipR.x, y = tipR.y; poly([[W + 10, y - 30], [x + 10, y - 9], [x + 10, y + 9], [W + 10, y + 40]], '#232730'); rect(x - 10, y - 9, 20, 18, '#2e333e'); rect(x - 10, y - 9, 20, 2, '#7a8496');
+  if (!P.armR || P.armR === 'pod') { const x = tipR.x, y = tipR.y; poly([[W + 10, y - 30], [x + 10, y - 9], [x + 10, y + 9], [W + 10, y + 40]], '#232730'); rect(x - 10, y - 9, 20, 18, '#2e333e'); rect(x - 10, y - 9, 20, 2, '#7a8496');
     for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) { circ(x - 5 + c * 10, y - 3.5 + r * 8, 3, '#07080d'); if (P.rk > 0 && r + c === 0) glow(x - 5, y - 3.5, 6, '#ff8a30', P.rk); } }
   // 창틀: 위 · 양옆 기둥 · 아래 계기판 (가운데는 비움)
   poly([[0, 0], [W, 0], [W, 15], [250, 9], [70, 9], [0, 15]], '#14161c'); ctx.fillStyle = '#4e5666'; ctx.fillRect(70, 9, 180, 0.6);
@@ -2155,13 +2223,13 @@ function drawExoCockpit(P) {
   // 계기판 화면
   rect(78, 150, 46, 24, '#06100a'); rect(196, 150, 46, 24, '#100a04');
   { const a = t * 3; ctx.strokeStyle = '#3aff7a'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.arc(101, 168, 14, Math.PI, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.moveTo(101, 168); ctx.lineTo(101 + Math.cos(Math.PI + (a % Math.PI)) * 14, 168 + Math.sin(Math.PI + (a % Math.PI)) * 14); ctx.stroke(); if (e && !e.dead) rect(101 + (e.x - VCAM.x) * 1.2, 168 - clamp((ez(e) - VCAM.z) * 0.5, 1, 13), 1.5, 1.5, '#ff3a2a'); }
-  hudText('AMMO', 199, 157, AMB, 4); rect(199, 160, 40 * (1 - (P.shots || 0) / 18), 2, AMB); hudText('HEAT', 199, 168, AMB, 4); rect(199, 170, 40 * clamp((P.heat || 0), 0, 1), 2, '#ff6a2a');
+  hudText('AMMO', 199, 157, AMB, 4); rect(199, 160, 40 * clamp(P.ammo != null ? P.ammo : 1 - (P.shots || 0) / 18, 0, 1), 2, AMB); hudText('HEAT', 199, 168, AMB, 4); rect(199, 170, 40 * clamp((P.heat || 0), 0, 1), 2, '#ff6a2a');
   // 유리 반사
   ctx.globalAlpha = 0.05; poly([[60, 9], [90, 9], [40, 144], [20, 144]], '#ffffff'); poly([[230, 9], [240, 9], [200, 144], [195, 144]], '#ffffff'); ctx.globalAlpha = 1;
   // HUD (켜질 때 깜빡)
   if (boot < 1 && ((t * 30) | 0) % 2) return;
   ctx.globalAlpha = boot;
-  hudText('EXO-45 PATRIOT', 30, 22, AMB, 5); hudText('SES 자유의 날개 · 강하 부대', 30, 29, '#c8a040', 4);
+  hudText(P.title || 'EXO-45 PATRIOT', 30, 22, AMB, 5); hudText('SES 자유의 날개 · 강하 부대', 30, 29, '#c8a040', 4);
   const cx = W / 2, cy = HZ + 12; for (let a = 0; a < 6.283; a += 0.4) rect(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7, 0.5, 0.5, AMB); rect(cx - 12, cy, 4, 0.5, AMB); rect(cx + 8, cy, 4, 0.5, AMB); rect(cx, cy - 12, 0.5, 4, AMB); rect(cx, cy + 8, 0.5, 4, AMB);
   if (e && !e.dead) { const a0 = aimOf(e), q = proj(a0.x, a0.y, a0.z), sz = Math.max(10, e.def.h * q.s * 0.9); const lock = ((t * 6) | 0) % 2; bracket(q.x, q.y, sz * 1.2, sz, lock ? AMB : '#ff6a2a', 5); hudText((lock ? 'LOCK ' : '') + Math.round((ez(e) - VCAM.z) * 3) + 'm', q.x + sz * 0.6 + 2, q.y - sz * 0.5, AMB, 4); glow(q.x, q.y, sz * 0.4, AMB, 0.25); }
   ctx.globalAlpha = 1;
@@ -2193,7 +2261,7 @@ function drawEagleHud(P) {
     ctx.globalAlpha = 1; }
   // 기울기 사다리 · 고도 · 속도
   const pd = VCAM.pitch * 57.3; for (let k = -2; k <= 2; k++) { const deg = Math.round(pd / 10) * 10 + k * 10, y = H / 2 + (deg - pd) * 2.6; if (y < 20 || y > H - 20) continue; rect(W / 2 - 40, y, 18, 0.5, G2); rect(W / 2 + 22, y, 18, 0.5, G2); hudText('-' + deg, W / 2 + 42, y + 2, G2, 4); }
-  hudText('ALT ' + Math.round(VCAM.y * 30) + 'm', 22, 20, G2, 5); hudText('SPD ' + Math.round((P.spd || 0) * 36) + 'km/h', 22, 27, G2, 5); hudText('EAGLE-1 · 공습', W - 22, 20, G2, 5, 'right');
+  hudText('ALT ' + Math.round(VCAM.y * 30) + 'm', 22, 20, G2, 5); hudText('SPD ' + Math.round((P.spd || 0) * 36) + 'km/h', 22, 27, G2, 5); hudText('EAGLE-1 · ' + (P.label || '공중타격'), W - 22, 20, G2, 5, 'right');
   const tq = proj(P.tx, 0, P.tz); if (tq.zc > 1) { const s = 5 + ((t * 8) | 0) % 2; ctx.strokeStyle = '#ff3a2a'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(tq.x, tq.y - s); ctx.lineTo(tq.x + s, tq.y); ctx.lineTo(tq.x, tq.y + s); ctx.lineTo(tq.x - s, tq.y); ctx.closePath(); ctx.stroke(); hudText('TGT', tq.x + s + 2, tq.y - 2, '#ff3a2a', 4); }
   if (P.rel && P.t - P.rel < 1.2 && ((t * 8) | 0) % 2) hudText('RELEASE', W / 2, H - 28, '#ffe060', 7, 'center');
   if (P.hits) hudText('IMPACT ×' + P.hits, W / 2, H - 18, '#ffe060', 5, 'center');
@@ -2216,21 +2284,30 @@ function drawSpace(P, fac) {
     const sw = 300 * (1 + t * 0.03), sh = sw * SPACE_META.ship.h / SPACE_META.ship.w, x = W / 2 - sw / 2 + 10 - t * 10, y = H * 0.12 - t * 2;
     if (SPACE.ship.complete) { ctx.drawImage(SPACE.ship, x, y, sw, sh); glowImg(SPACE.shipEm, x, y, sw, sh); }
     ctx.imageSmoothingEnabled = false;
-    hudText('SES 자유의 날개', 14, H - 20, '#ffe060', 7); hudText('궤도 지원 — 아틀라스 캐넌 장전', 14, H - 11, '#c8b880', 5);
+    if (P.rail) {   // 캐넌 포구에서 행성 표면으로 내려가는 조준 레이저
+      const mx = x + 503 / SPACE_META.ship.w * sw, my = y + 246 / SPACE_META.ship.h * sh, ex = mx + 70, ey = H + 10, fl = 0.75 + Math.sin(t * 60) * 0.25;
+      ctx.globalAlpha = 0.35 * fl; line(mx, my, ex, ey, '#ff2424', 2); ctx.globalAlpha = fl; line(mx, my, ex, ey, '#ff8a8a', 0.6); ctx.globalAlpha = 1; glowLine(mx, my, ex, ey, '#ff2424', 0.8); glow(mx, my, 4, '#ff3a3a', 1);
+    }
+    hudText('SES 자유의 날개', 14, H - 20, '#ffe060', 7); hudText(P.rail ? '궤도 지원 — 레일캐넌 표적 고정' : '궤도 지원 — 아틀라스 캐넌 장전', 14, H - 11, P.rail ? '#ff8a8a' : '#c8b880', 5);
   } else {             // 근접: 아틀라스 캐넌 · 발사 (반동으로 밀림)
     const f = t - P.fireAt, fire = f >= 0, k = fire ? clamp(1 - f / 0.3, 0, 1) : 0, im = fire && f < 0.7 ? SPACE.at1 : SPACE.at0, emi = fire && f < 0.7 ? SPACE.at1Em : SPACE.at0Em, M = SPACE_META.at;
     const sw = W * (1.02 + t * 0.03), sh = sw * M.h / M.w, dx = (M.muzzle.x - M.muzzle2.x), dy = (M.muzzle.y - M.muzzle2.y), dl = Math.hypot(dx, dy), x = (W - sw) / 2 + dx / dl * k * 6, y = (H - sh) / 2 + dy / dl * k * 6;
     if (im.complete) { ctx.drawImage(im, x, y, sw, sh); glowImg(emi, x, y, sw, sh); }
     ctx.imageSmoothingEnabled = false;
     const mx = x + M.muzzle.x / M.w * sw, my = y + M.muzzle.y / M.h * sh, ux = -dx / dl, uy = -dy / dl;
+    const RC = P.rail, cA = RC ? '#9ad0ff' : '#ffc060', cB = RC ? '#c8e0ff' : '#ffe0a0', cC = RC ? '#bed2ff' : '#ffd080', cD = RC ? '#7ab8ff' : '#ffb060';
+    if (RC && !fire) { const L = 400, fl = 0.75 + Math.sin(t * 60) * 0.25; ctx.globalAlpha = 0.4 * fl; line(mx, my, mx + ux * L, my + uy * L, '#ff2424', 2.4); ctx.globalAlpha = fl; line(mx, my, mx + ux * L, my + uy * L, '#ff9a9a', 0.7); ctx.globalAlpha = 1; glowLine(mx, my, mx + ux * L, my + uy * L, '#ff2424', 0.9); }
+    if (RC && f > -0.25 && f < 0.35) for (let i = 0; i < 4; i++) {   // 충전 · 발사 순간 전기 불꽃
+      let px = mx, py = my; ctx.strokeStyle = i % 2 ? '#ffffff' : '#9ad0ff'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(px, py);
+      for (let j = 0; j < 5; j++) { px += (hash2(i, j, (t * 30) | 0) - 0.5) * 16; py += (hash2(j, i, (t * 30) | 0) - 0.5) * 16; ctx.lineTo(px, py); } ctx.stroke(); }
     if (fire) {
-      if (f < 0.5) { glow(mx, my, 70 * (1 - f * 1.6), '#ffffff', 1); glow(mx, my, 130 * (1 - f), '#ffc060', 0.9); light(mx, my, 320, '#ffe0a0', 1.4 * (1 - f * 2)); }
+      if (f < 0.5) { glow(mx, my, 70 * (1 - f * 1.6), '#ffffff', 1); glow(mx, my, 130 * (1 - f), cA, 0.9); light(mx, my, 320, cB, 1.4 * (1 - f * 2)); }
       for (let i = 0; i < 3; i++) { const r = f * 240 + i * 16; ctx.globalAlpha = clamp(0.55 - f, 0, 0.55); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(mx, my, r, r * 0.5, Math.atan2(uy, ux) + 1.57, 0, 6.283); ctx.stroke(); }
       ctx.globalAlpha = 1;
-      const d2 = f * 560, sx = mx + ux * d2, sy = my + uy * d2; line(mx + ux * d2 * 0.55, my + uy * d2 * 0.55, sx, sy, '#ffffff', 3); glowLine(mx, my, sx, sy, '#ffd080', 1); glow(sx, sy, 12, '#ffffff', 1);
-      for (let i = 0; i < 6; i++) { const a = Math.atan2(uy, ux) + (hash2(i, 3, 1) - 0.5) * 1.4, r = f * (80 + i * 20); glow(mx + Math.cos(a) * r, my + Math.sin(a) * r, 4, '#ffb060', clamp(0.8 - f, 0, 0.8)); }
+      const d2 = f * (RC ? 900 : 560), sx = mx + ux * d2, sy = my + uy * d2; line(mx + ux * d2 * (RC ? 0.05 : 0.55), my + uy * d2 * (RC ? 0.05 : 0.55), sx, sy, '#ffffff', RC ? 4 : 3); glowLine(mx, my, sx, sy, cC, 1); glow(sx, sy, 12, '#ffffff', 1);
+      for (let i = 0; i < 6; i++) { const a = Math.atan2(uy, ux) + (hash2(i, 3, 1) - 0.5) * 1.4, r = f * (80 + i * 20); glow(mx + Math.cos(a) * r, my + Math.sin(a) * r, 4, cD, clamp(0.8 - f, 0, 0.8)); }
     } else { glow(mx, my, 5 + Math.sin(t * 30) * 2, '#ff8a30', 0.8); if (((t * 6) | 0) % 2) hudText('발사 준비', W - 14, H - 12, '#ffe060', 6, 'right'); }
-    hudText('아틀라스 캐넌', 14, 20, '#ffe060', 6);
+    hudText(RC ? '레일캐넌' : '아틀라스 캐넌', 14, 20, RC ? '#bed2ff' : '#ffe060', 6);
   }
   ctx.imageSmoothingEnabled = false;
 }
@@ -2244,7 +2321,7 @@ function povOverlay() {
   if (!POV) return;
   if (POV.kind === 'exo') drawExoCockpit(POV);
   else if (POV.kind === 'eagle') drawEagleHud(POV);
-  else if (POV.kind === 'orbit' && POV.ground) { hudText('착탄', W / 2, 22, '#ffe060', 7, 'center'); }
+  else if (POV.kind === 'orbit' && POV.ground) { hudText('착탄', W / 2, 22, POV.rail ? '#bed2ff' : '#ffe060', 7, 'center'); }
 }
 
 /* ---------------- 루이스 (뒷모습) ---------------- */
@@ -2286,7 +2363,7 @@ const G = { state: 'title', round: 0, score: 0, best: 0, list: [], idx: 0, prog:
 try { G.best = +localStorage.getItem('setac-hero-best') || 0; } catch (e) { G.best = 0; }
 let BG = null;
 function approachTime(s) { const len = s.c.length; return Math.max(1.2 + 0.24 * len, (2.9 + 0.45 * len) * Math.pow(0.92, G.round - 1)); }
-const TRY_POV = new URLSearchParams(location.search).get('try') === 'pov' ? ['v-patriot', 'e-air', 'o-precision', 'o-rail'] : null; let tryI = 0;
+const TRY_POV = new URLSearchParams(location.search).get('try') === 'pov' ? POV_KEYS : null; let tryI = 0;
 function pickList(n) { if (TRY_POV) { const out = []; for (let i = 0; i < n; i++) { const want = TRY_POV[tryI++ % TRY_POV.length], x = STRATS.findIndex(s => s.k === want); out.push(x < 0 ? 0 : x); } return out; }
   const out = []; let last = -1; for (let i = 0; i < n; i++) { let x; do { x = (Math.random() * STRATS.length) | 0; } while (x === last && STRATS.length > 1); out.push(x); last = x; } return out; }
 function setFaction(f) { if (typeof POV !== 'undefined' && POV) exitPOV(); G.faction = f; BG = makeBg(f); }
