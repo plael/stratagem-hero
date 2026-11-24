@@ -1430,8 +1430,9 @@ function eagleFx(e, k) {
   const LABEL = { line: '공중타격', strafe: '기총소사', rocket: '110mm 로켓', '500': '500kg 폭탄', napalm: '네이팜', smoke: '연막', gas: '가스', cluster: '집속탄' }[mode];
   const jet = { x: tx * 0.6 + 0.4, y: 3.8, z: 0.8, vx: 0, vz: 26, on: false };
   if (POVE && LONG) Object.assign(jet, { x: tx, y: 11, z: tz - 62, vx: 0, vz: 30 });
-  if (BOMB) Object.assign(jet, POVE ? { x: tx - 70, y: 14, z: tz, vx: 30, vz: 0 } : { x: tx - 30, y: 3.1, z: tz + 2.6, vx: 32, vz: 0 });
-  if (POVE) fx.end = 5.6; else if (BOMB) fx.end = 3.2;
+  const SIDE = POVE && BOMB;   // 공중타격류: 카메라가 옆에서 따라가며 왼쪽 → 오른쪽 횡이동 (적은 정면, 폭탄 줄은 화면 가로)
+  if (BOMB) Object.assign(jet, SIDE ? { x: tx - 30, y: 5.6, z: tz, vx: 30, vz: 0 } : { x: tx - 30, y: 3.1, z: tz + 2.6, vx: 32, vz: 0 });
+  if (POVE) fx.end = 5.6; else if (BOMB) fx.end = mode === '500' ? 4.6 : 3.2;
   const bombs = [], rockets = []; let done = false, doneT = 0, nextB = 0, passed = false;
   const GB = 16;
   // 떨어질 자리: 적이 있는 자리를 가로로 덮음 (무리는 양 끝 놈까지)
@@ -1444,19 +1445,30 @@ function eagleFx(e, k) {
     else if (mode === 'napalm') lineN(4, L0, R0);
     else if (mode === 'smoke' || mode === 'gas') lineN(3, L0 - 0.4, R0 + 0.4);
     else if (mode === '500') plan.push({ x: tx, z: tz });
-    else for (let i = 0; i < 12; i++) plan.push({ x: rand(L0, R0), z: tz + rand(-1.1, 1.3), small: true });
+    else for (let i = 0; i < 26; i++) plan.push({ x: lerp(L0 - 2.4, R0 + 2.4, (i + rand(0, 1)) / 26), z: tz + rand(-2, 2.6), small: true });   // 집속탄: 넓은 띠
     plan.sort((a, b) => a.x - b.x);
   }
   fx.at(0.4, () => { jet.on = true; sfx.jet(); });
   let pv = null;
   if (POVE) fx.at(0.45, () => {
-    const cl = []; for (let i = 0; i < 26; i++) { const u = -72 + i * 1.9 + rand(-1, 1), o = (i % 2 ? 1 : -1) * rand(1, 8); if (u > -30) continue; cl.push(LONG ? { x: tx + o, y: rand(8.5, 11.5), z: tz + u, r: rand(2, 4.2), a: 0.5 } : { x: tx + u, y: rand(9.5, 12.5), z: tz + o, r: rand(2, 4.2), a: 0.5 }); }
-    const city = LONG ? null : []; if (!LONG) for (const sd of [-1, 1]) for (let x = tx - 80; x < tx + 70;) { const w = rand(3, 6.5), d = rand(3, 6), gap = rand(0.8, 2.6);   // 비행 경로 양옆으로 건물 (목표 근처는 비움)
-      if (Math.abs(x + w / 2 - tx) > 9) city.push({ x: x + w / 2, z: tz + sd * (4.2 + d / 2 + rand(0, 1.5)), w, d, h: rand(3, 9.5), lit: Math.random() }); x += w + gap; }
+    const cl = []; if (!SIDE) for (let i = 0; i < 26; i++) { const u = -72 + i * 1.9 + rand(-1, 1), o = (i % 2 ? 1 : -1) * rand(1, 8); if (u > -30) continue; cl.push(LONG ? { x: tx + o, y: rand(8.5, 11.5), z: tz + u, r: rand(2, 4.2), a: 0.5 } : { x: tx + u, y: rand(9.5, 12.5), z: tz + o, r: rand(2, 4.2), a: 0.5 }); }
+    const city = LONG ? null : [];
+    if (SIDE) {   // 표적 뒤로 건물 줄 (천천히 지나감) + 앞쪽 낮은 잔해 (빠르게 지나감 → 속도감)
+      for (const [z0, z1, h0, h1] of [[9, 16, 3, 9], [18, 30, 5, 12]]) for (let x = tx - 70; x < tx + 70;) { const w = rand(3, 7), d = rand(3, 6); city.push({ x: x + w / 2, z: tz + rand(z0, z1), w, d, h: rand(h0, h1), lit: Math.random() }); x += w + rand(0.5, 3); }
+      for (let x = tx - 60; x < tx + 60;) { const w = rand(1, 2.6); city.push({ x: x + w / 2, z: tz - rand(6, 9), w, d: rand(0.8, 1.6), h: rand(0.3, 1.1), lit: 0 }); x += w + rand(2, 6); }
+    }
     nz({ type: 'highpass', f: 900, f2: 1600, d: 4.2, v: 0.12 });   // 바람
-    pv = { kind: 'eagle', fx, e, hideLouis: true, tx, tz, spd: jet.vx || jet.vz, hits: 0, rel: 0, kick: 0, boost: 0, clouds: cl, city, speed: 1, zoom: 0, label: LABEL,
+    pv = { kind: 'eagle', side: SIDE, fx, e, hideLouis: true, tx, tz, spd: jet.vx || jet.vz, hits: 0, rel: 0, kick: 0, boost: 0, clouds: cl, city, speed: 1, zoom: 0, label: LABEL,
       cam: P => {
         if (!e.dead) { const a0 = aimOf(e); P.tx = a0.x; P.tz = a0.z; }
+        if (SIDE) {   // 옆에서 따라가다 표적이 화면 가운데 오면 멈춤 (이글은 오른쪽으로 빠져나감)
+          const raw = (jet.x - tx) * 0.38, off = raw < 1 ? raw : 1 + (1 - Math.exp(-(raw - 1) / 2)) * 2;
+          P.zoom = lerp(P.zoom, P.hits > 0 && !(done && fx.t > doneT + 0.5) ? 1 : 0, 0.1); P.kick = Math.max(0, P.kick - 0.05);
+          const buf = (hash2((fx.t * 50) | 0, 3, 5) - 0.5) * P.kick * 0.25;
+          setVC({ on: true, x: tx + off, y: 7.2 + buf, z: tz - 11, yaw: 0, pitch: 0.36, cy: H * 0.52, f: FOCAL * (0.82 + 0.12 * P.zoom) });
+          P.roll = P.kick * 0.012 * Math.sin(fx.t * 47); P.spd = jet.vx; P.speed = 0.55 + clamp(1 - Math.abs(off - raw) / 6, 0, 1) * 0.5; P.foe = [W * 2, H * 0.5];
+          return;
+        }
         const ahead = LONG ? P.tz - jet.z : P.tx - jet.x, look = Math.atan2(jet.y - 0.4, Math.max(0.5, ahead + 0.8));   // 목표를 화면 가운데에
         const up = done ? clamp((fx.t - doneT - 0.35) / 0.8, 0, 1) : 0, us = up * up * (3 - 2 * up);
         const pitch = lerp(clamp(look, 0.22, 1.25), -0.1, us);
@@ -1476,16 +1488,29 @@ function eagleFx(e, k) {
     bombs.push({ x0: jet.x, z0: jet.z, y0, x: jet.x, y: y0, z: jet.z, x1: d.x, z1: d.z, tf, age: 0, small: d.small });
     if (pv && !pv.rel) pv.rel = pv.t; if (nextB === 1) { GUN.hatch && GUN.hatch(); nz({ type: 'bandpass', f: 500, f2: 160, d: 0.25, v: 0.14 }); }
   };
+  const blow500 = b => {   // 지연 신관이 다 되어 터짐
+    b.blown = true;
+    if (pv) { slowmo(0.8, 0.35); pv.hits++; pv.kick = 1.4; pv.armed = false; }
+    boom3(b.x, b.z, 3.8, pv ? { quiet: true } : {}); flames3(b.x, b.z, 2.6, 1.4); flash(pv ? 0.4 : 0.85); addShake(pv ? 0.5 : 0.9, 0, 6);
+    for (let i = 0; i < 3; i++) decals.push({ kind: 'ring', x: b.x, z: b.z, r: 0.6, grow: 14 + i * 5, life: -i * 0.08, max: 0.6 });
+    areaHit(e, b.x, b.z, 4.6); finish(3);
+  };
   const land = b => {
+    if (mode === '500' && !b.armed) {   // 500kg: 땅에 박힘 → 경고음 → 약 1.2초 뒤 폭발
+      b.armed = true; b.blowAt = fx.t + 1.2; dust3(b.x, b.z, 20, 1.1); osc({ f: 95, f2: 38, d: 0.3, v: 0.4 }); addShake(0.35, 0, 3); decals.push({ kind: 'scorch', x: b.x, z: b.z, r: 1.0, life: 0, max: 14 });
+      if (pv) { pv.armed = true; pv.kick = 0.6; }
+      [0.2, 0.5, 0.72, 0.88, 1.0, 1.1].forEach(d2 => fx.at(fx.t + d2, () => osc({ f: 1500, d: 0.05, v: 0.09, type: 'square' })));
+      return;
+    }
     if (pv) { if (!pv.hits) slowmo(0.85, 0.35); pv.hits++; pv.kick = 1; addShake(0.12); if (pv.hits === 1) flash(0.18, '#fff0c0'); }
     const Q = pv ? { quiet: true } : {}, B = 1;
-    if (b.small) boom3(b.x, b.z, 0.5 * B, Q);
+    if (b.small) boom3(b.x, b.z, mode === 'cluster' ? 0.62 : 0.5 * B, Q);
     else if (mode === '500') { boom3(b.x, b.z, 2.9, Q); flash(pv ? 0.3 : 0.8); }
     else if (mode === 'napalm') { boom3(b.x, b.z, 0.7 * B, Q); flames3(b.x, b.z, 1.4, 1.6); }
     else if (mode === 'smoke') { boom3(b.x, b.z, 0.4, { noSmoke: true }); cloud3(b.x, b.z, 2.2, ['#8a8682', '#a6a096', '#6a6662']); }
     else if (mode === 'gas') { boom3(b.x, b.z, 0.4, { noSmoke: true }); cloud3(b.x, b.z, 2.2, ['#78be3c', '#b4e66e', '#5a9a2a']); }
     else boom3(b.x, b.z, 1.0 * B, Q);
-    const Rr = b.small ? 1.0 : mode === '500' ? 3.2 : 1.6;
+    const Rr = b.small ? (mode === 'cluster' ? 1.3 : 1.0) : mode === '500' ? 4.6 : 1.6;
     areaHit(e, b.x, b.z, Rr);
     if (done) return;
     let kill;   // 폭발이 적에게 닿는 그 폭탄에서 처치
@@ -1500,15 +1525,13 @@ function eagleFx(e, k) {
       else if (POVE && LONG) { if (!done) jet.y = Math.max(4.4, jet.y - dt * 5.5); else if (fx.t > doneT + 0.35) jet.y += dt * (fx.t - doneT - 0.35) * 12;
         if (done && fx.t > doneT + 0.3) { pv && (pv.boost = Math.min(1, pv.boost + dt * 2)); jet.vz = Math.min(42, jet.vz + dt * 14); }
         if (done && fx.t > doneT + 1.45 && POV && POV.fx === fx) exitPOV(); }
-      else if (POVE) { if (nextB < plan.length) jet.y = Math.max(6.4, jet.y - dt * 6.5); else if (!done) jet.y = Math.max(5.8, jet.y - dt * 0.8); else if (done && fx.t > doneT + 0.35) jet.y += dt * (fx.t - doneT - 0.35) * 12;
-        if (done && fx.t > doneT + 0.3) { pv && (pv.boost = Math.min(1, pv.boost + dt * 2)); jet.vx = Math.min(42, jet.vx + dt * 14); }
-        if (done && fx.t > doneT + 1.45 && POV && POV.fx === fx) exitPOV(); }
+      else if (SIDE) { if (done && fx.t > doneT + 1.1 && POV && POV.fx === fx) exitPOV(); }
       // 떨구기: 일반 시점은 기체 바로 아래로 (속도 55%), 조종석 시점은 앞으로 던지듯 (착탄이 시야 안에 들어오게)
       while (BOMB && nextB < plan.length) {
         const d = plan[nextB], tf = Math.sqrt(2 * Math.max(0.2, jet.y - 0.5) / GB);
-        if (POVE ? jet.x >= tx - 40 + nextB * 1.25 : jet.x + jet.vx * 0.55 * tf >= d.x) { nextB++; drop(d); } else break;
+        if (jet.x + jet.vx * 0.55 * tf >= d.x) { nextB++; drop(d); } else break;
       }
-      if (BOMB && !POVE && !passed && jet.x > tx - 5) { passed = true; nz({ type: 'bandpass', f: 2600, f2: 500, d: 0.55, v: 0.24 }); addShake(0.22); }
+      if (BOMB && !passed && jet.x > (SIDE ? tx + 4 : tx - 5)) { passed = true; nz({ type: 'bandpass', f: 2600, f2: 500, d: 0.55, v: 0.24 }); addShake(0.22); }
     }
     if (mode === 'strafe' && jet.on && jet.z > tz - (POVE ? 21 : 14) && jet.z < tz + 1 && !done && Math.random() < 0.85) {
       const az = e.dead ? tz : aimOf(e).z, gz = jet.z + (POVE ? 10.5 : 8) + rand(-0.5, 0.5), gx = (e.dead ? tx : aimOf(e).x) + rand(-0.6, 0.6);   // 밀려난 적을 따라감
@@ -1528,12 +1551,13 @@ function eagleFx(e, k) {
       P3({ x: r.cx, y: r.cy, z: r.cz, kind: 'smoke', max: 0.5, r: 0.12 });
       if (kk >= 1) { r.hit = true; if (pv) { if (!pv.hits) slowmo(0.7, 0.35); pv.hits++; pv.kick = 1; } boom3(r.cx, r.cz, 1.1, pv ? { quiet: true } : {}); if (rockets.every(q => q.hit) && rockets.length === 2) finish(3); else areaHit(e, r.cx, r.cz, 1.5); }
     }
+    for (const b of bombs) if (b.armed && !b.blown && fx.t >= b.blowAt) blow500(b);
     for (const b of bombs) {
       if (b.hit) continue; b.age += dt; const u = Math.min(1, b.age / b.tf);
       b.x = lerp(b.x0, b.x1, u); b.z = lerp(b.z0, b.z1, u); b.y = b.y0 - 0.5 * GB * Math.min(b.age, b.tf) ** 2;
       if (u >= 1) { b.hit = true; b.x = b.x1; b.z = b.z1; b.y = 0.2; land(b); }
     }
-    if (fx.t > (POVE ? 4.3 : 2.9)) finish(2);
+    if (fx.t > (POVE ? 4.3 : 2.9) + (mode === '500' ? 1.5 : 0)) finish(2);
   };
   fx.drawers.push(() => {
     for (const b of bombs) if (!b.hit) {
@@ -1543,17 +1567,23 @@ function eagleFx(e, k) {
       if (qt.zc < 0.6) { rect(q.x - k / 2, q.y - k / 2, k, k, '#2c3038'); continue; }
       line(qt.x, qt.y, q.x, q.y, '#2c3038', k); line(qt.x, qt.y, q.x, q.y, '#8a94a0', k * 0.35); rect(qt.x - k * 0.6, qt.y - k * 0.6, k * 1.2, k * 1.2, '#ffd630');
     }
+    for (const b of bombs) if (b.armed && !b.blown) {   // 땅에 비스듬히 박힌 500kg + 깜빡이는 경고등
+      const a = proj(b.x - 0.35, 1.25, b.z), g = proj(b.x + 0.12, 0.05, b.z); if (a.zc < 0.6) continue; const k = clamp(g.s * 0.36, 2, 14);
+      line(g.x, g.y, a.x, a.y, '#23272e', k); line(g.x, g.y, a.x, a.y, '#5a6270', k * 0.3); const m = [lerp(g.x, a.x, 0.7), lerp(g.y, a.y, 0.7)];
+      line(m[0] - (a.x - g.x) * 0.05, m[1] - (a.y - g.y) * 0.05, m[0] + (a.x - g.x) * 0.05, m[1] + (a.y - g.y) * 0.05, '#ffd630', k * 1.05);
+      const on = ((fx.t - b.blowAt) * (fx.t > b.blowAt - 0.4 ? 14 : 6) | 0) % 2; if (on) { glow(a.x, a.y, 3 + k * 0.5, '#ff2424', 1); light(a.x, a.y, 30 + k * 3, '#ff2424', 0.8); }
+    }
     for (const r of rockets) if (!r.hit && r.cx != null) { const q = proj(r.cx, r.cy, r.cz); if (q.zc < 1) continue; const k = clamp(q.s * 0.06, 1, 4); glow(q.x, q.y + k, 3 + k, '#ff8c1e', 0.8); rect(q.x - k / 2, q.y - k / 2, k, k, '#c4ccd6'); rect(q.x - k / 2, q.y + k / 2, k, 1, '#ff8c1e'); }
   });
-  fx.jet = () => jet.on && !(POV && POV.fx === fx) && (BOMB ? jet.x < tx + 45 : jet.z < 90) ? { z: jet.z, x: jet.x, draw: () => {
+  fx.jet = () => jet.on && !(POV && POV.fx === fx && !POV.side) && (BOMB ? jet.x < tx + 45 : jet.z < 90) ? { z: jet.z, x: jet.x, draw: () => {
     if (!BOMB) { drawObj(SPR_JET, jet.x, jet.y, jet.z, 0.11); const q = proj(jet.x, jet.y, jet.z); if (((fx.t * 20) | 0) % 2) rect(q.x - 1, q.y + 1, 2, 1, '#ffd630'); return; }
     // 가로로 스쳐 가는 이글: 땅 그림자 · 비행운 · 잔상 · 엔진 불빛
     const q = proj(jet.x, jet.y, jet.z); if (q.zc < 0.6) return;
     shadow(jet.x - 0.4, jet.z, 2.6, 0.2);
     const tq = proj(jet.x - 1.6, jet.y + 0.05, jet.z), tq2 = proj(jet.x - 12, jet.y + 0.25, jet.z);
     ctx.globalAlpha = 0.3; line(tq2.x, tq2.y, tq.x, tq.y, '#dfe8f4', Math.max(1, q.s * 0.06)); ctx.globalAlpha = 1; glowLine(tq2.x, tq2.y, tq.x, tq.y, '#9ad8ff', 0.4);
-    for (let i = 3; i >= 1; i--) { ctx.globalAlpha = 0.2 / i; drawObj(SPR_JET_SIDE, jet.x - i * jet.vx * 0.014, jet.y, jet.z, 0.11); }
-    ctx.globalAlpha = 1; drawObj(SPR_JET_SIDE, jet.x, jet.y, jet.z, 0.11); glow(tq.x, tq.y, 6, '#7ad8ff', 1); light(tq.x, tq.y, 60, '#9ad8ff', 0.5);
+    const js = SIDE ? 0.15 : 0.11; for (let i = 3; i >= 1; i--) { ctx.globalAlpha = 0.2 / i; drawObj(SPR_JET_SIDE, jet.x - i * jet.vx * (SIDE ? 0.02 : 0.014), jet.y, jet.z, js); }
+    ctx.globalAlpha = 1; drawObj(SPR_JET_SIDE, jet.x, jet.y, jet.z, js); glow(tq.x, tq.y, 6, '#7ad8ff', 1); light(tq.x, tq.y, 60, '#9ad8ff', 0.5);
   } } : null;
   fx.xf = () => tx;
   fx.zf = () => tz - 0.05; return fx;
@@ -2267,6 +2297,16 @@ function drawEagleHud(P) {
   if (P.hits) hudText('IMPACT ×' + P.hits, W / 2, H - 18, '#ffe060', 5, 'center');
   if (P.boost > 0 && ((t * 6) | 0) % 2) hudText('AFTERBURNER', 22, 34, '#ffb060', 4);
 }
+/* ---------------- 이글 측면 추적 화면 (공중타격류) ---------------- */
+function drawEagleSide(P) {
+  const t = P.t, G2 = '#7dffb4', fr = (t * 30) | 0;
+  ctx.globalAlpha = 0.22; for (let i = 0; i < 14; i++) { const y = 14 + hash2(i, 5, fr) * (H - 28), x = hash2(i, fr, 9) * W, L = 18 + hash2(i, 2, fr) * 36; line(x, y, x - L, y, '#e8f4ff', 0.5); } ctx.globalAlpha = 1;   // 바람 줄
+  hudText('EAGLE-1 · ' + (P.label || '공중타격'), 10, 30, G2, 5); hudText('SPD ' + Math.round((P.spd || 0) * 36) + 'km/h', 10, 37, G2, 4);
+  const tq = proj(P.tx, 0, P.tz); if (tq.zc > 1) { const s = 5 + ((t * 8) | 0) % 2; ctx.strokeStyle = '#ff3a2a'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(tq.x, tq.y - s); ctx.lineTo(tq.x + s, tq.y); ctx.lineTo(tq.x, tq.y + s); ctx.lineTo(tq.x - s, tq.y); ctx.closePath(); ctx.stroke(); hudText('TGT', tq.x + s + 2, tq.y - 2, '#ff3a2a', 4); }
+  if (P.rel && P.t - P.rel < 1.0 && ((t * 8) | 0) % 2) hudText('RELEASE', W / 2, H - 24, '#ffe060', 6, 'center');
+  if (P.armed && ((t * 6) | 0) % 2) hudText('지연 신관 작동', W / 2, H - 24, '#ff3a2a', 6, 'center');
+  if (P.hits) hudText('IMPACT ×' + P.hits, W - 10, H - 24, '#ffe060', 5, 'right');
+}
 /* ---------------- 우주: 구축함 전경 → 아틀라스 캐넌 근접 ---------------- */
 const STARS = Array.from({ length: 160 }, (_, i) => ({ x: hash2(i, 1, 21) * W, y: hash2(i, 2, 21) * H, b: hash2(i, 3, 21) }));
 function drawSpace(P, fac) {
@@ -2320,7 +2360,7 @@ function povBackground(fac, real) {   // true 면 기본 배경 대신 그림
 function povOverlay() {
   if (!POV) return;
   if (POV.kind === 'exo') drawExoCockpit(POV);
-  else if (POV.kind === 'eagle') drawEagleHud(POV);
+  else if (POV.kind === 'eagle') { if (POV.side) drawEagleSide(POV); else drawEagleHud(POV); }
   else if (POV.kind === 'orbit' && POV.ground) { hudText('착탄', W / 2, 22, POV.rail ? '#bed2ff' : '#ffe060', 7, 'center'); }
 }
 
