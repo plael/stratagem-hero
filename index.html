@@ -154,7 +154,8 @@ function drawObj(img, x, y, z, artPx, o = {}) {
   const k = artPx * (img._pxk || 1) * q.s, hd = HD(img);
   const dw = Math.max(1 / PXS, sn(img.width * k * (o.sx || 1))), dh = Math.max(1 / PXS, sn(img.height * k * (o.sy || 1)));
   let gx, gy;
-  if (o.rot) { ctx.save(); ctx.translate(sn(q.x), sn(q.y - dh / 2)); ctx.rotate(o.rot); ctx.drawImage(hd, -dw / 2, -dh / 2, dw, dh); ctx.restore(); }
+  if (o.rotB) { ctx.save(); ctx.translate(sn(q.x + (o.dx || 0)), sn(q.y)); ctx.rotate(o.rotB); ctx.drawImage(hd, -dw / 2, -dh, dw, dh); ctx.restore(); }   // 발밑을 축으로 꺾임
+  else if (o.rot) { ctx.save(); ctx.translate(sn(q.x), sn(q.y - dh / 2)); ctx.rotate(o.rot); ctx.drawImage(hd, -dw / 2, -dh / 2, dw, dh); ctx.restore(); }
   else { gx = sn(q.x - dw / 2 + (o.dx || 0)); gy = sn(q.y - dh); ctx.drawImage(hd, gx, gy, dw, dh); if (hd._em && ctx.globalAlpha > 0.5) glowImg(hd._em, gx, gy, dw, dh); }
   return { x: q.x, y: q.y, w: dw, h: dh };
 }
@@ -1106,6 +1107,7 @@ function makeEnemy(s, force) {
   return e;
 }
 function heavyVoice(v) {
+  return;   // 몹 소리는 쓰지 않음
   if (v === 'bug' || v === 'titan') { osc({ f: v === 'titan' ? 55 : 80, f2: 38, d: 0.9, v: 0.22, type: 'sawtooth', am: [23, 0.5], a: 0.08, dist: true }); nz({ type: 'bandpass', f: 600, q: 2, d: 0.7, v: 0.12, am: [17, 0.6], a: 0.05 }); }
   else if (v === 'bot' || v === 'factory') { osc({ f: v === 'factory' ? 82 : 110, d: 0.7, v: 0.09, type: 'square', a: 0.04 }); osc({ f: v === 'factory' ? 87 : 116, d: 0.7, v: 0.07, type: 'square', a: 0.04 }); }
   else if (v === 'vox') { for (let i = 0; i < 7; i++) osc({ f: pick([180, 220, 160, 260, 140]), d: 0.09, v: 0.07, type: 'square', at: i * 0.1, am: [60, 0.6] }); }
@@ -1144,17 +1146,15 @@ function updateEnemy(e, dt) {
     const n = D.move === 'lurch' ? 9 : D.steps || 5, st = Math.floor(e.p * n);
     if (st !== e.step) {
       e.step = st;
-      if (D.move === 'lurch') nz({ type: 'lowpass', f: 260, d: 0.1, v: 0.03 });
-      else if (D.move === 'stomp') { osc({ f: 58, f2: 36, d: 0.16, v: Math.min(0.16, 0.06 + D.stepShake * 0.5), a: 0.01 }); nz({ type: 'lowpass', f: 220, d: 0.12, v: 0.04 }); addShake(D.stepShake * (12 / e.z)); dust3(e.x + rand(-D.w, D.w) * 0.3, e.z, 6, D.w * 0.3); }
+      if (D.move === 'stomp') { addShake(D.stepShake * (12 / e.z)); dust3(e.x + rand(-D.w, D.w) * 0.3, e.z, 6, D.w * 0.3); }
     }
   }
   if (D.move === 'charge') {
     const rush = (e.p > 0.35 && e.p < 0.5) || (e.p > 0.74 && e.p < 0.9);
-    if (rush && !e.rush) { nz({ type: 'lowpass', f: 180, d: 0.5, v: 0.08, a: 0.05 }); addShake(0.14); }
+    if (rush && !e.rush) addShake(0.14);
     e.rush = rush;
     if (rush && Math.random() < 0.7) P3({ x: e.x + rand(-0.8, 0.8), y: 0.1, z: e.z + 0.3, vx: rand(-1, 1), vy: rand(0.2, 0.8), vz: 1, drag: 1, kind: 'smoke', max: 0.8, r: rand(0.15, 0.3) });
   }
-  if (D.move === 'roll' && Math.random() < 0.05) S.click(160 + Math.random() * 120, 0.01);
   if (D.move === 'fly') { const dive = clamp((e.p - 0.5) / 0.35, 0, 1); e.alt = 3.8 - 2.6 * dive * dive + Math.sin(e.t * 3) * 0.25; if (e.p > 0.5 && !e.dived) { e.dived = true; heavyVoice('ray'); } }
   if (e.struct) { if (e.door > 0) e.door -= dt; if (D.spawn === 'trooper' && Math.random() < 0.15) P3({ x: e.x + 0.6, y: D.h + 0.4, z: e.sz, vx: rand(-0.2, 0.2), vy: rand(0.5, 1), drag: 0.4, kind: 'smoke', max: 1.8, r: rand(0.2, 0.35) }); }
   if ((D.atk === 'cannon' || D.atk === 'laser') && e.p > 0.82) e.charge = true;
@@ -1162,14 +1162,16 @@ function updateEnemy(e, dt) {
 // 그리기용 항목 만들기 (멀리 있는 것부터 정렬해서 찍음)
 function enemyDrawers(e, list) {
   const t = G.time, still = e.frozen || G.dead || e.stop, D = e.def;
-  const blink = e.frozen && !(e.flash > 0) && ((t * 16) | 0) % 2 === 0;
+  const blink = e.frozen && !(e.flash > 0) && !(typeof AIM !== 'undefined' && AIM && AIM.e === e) && ((t * 16) | 0) % 2 === 0;
   const fogK = z => z > 26 ? 0.7 : z > 16 ? 0.48 : z > 9 ? 0.25 : 0;
   const pickImg = (def, fr, z, fl, stun) => { let img = def.fr[fr]; if (fl) return variant(img, 'white'); if (stun) return variant(img, 'stun'); const k = fogK(z); return k ? variant(img, SCENE[e.fac].fog + '|' + k) : img; };
-  const one = (def, x, y, z, bob, fl, flinch) => {
+  const one = (def, x, y, z, bob, fl, flinch, hx) => {
     const nf = def.fr.length, fr = still ? 0 : (((t * (e.rush ? 14 : 7) * nf / 2 + bob) | 0) % nf);
     const img = pickImg(def, fr, z, fl, e.stun > 0 && ((t * 20) | 0) % 2);
-    const sq = flinch > 0 ? { sx: 1 + flinch * 1.2, sy: 1 - flinch * 1.0 } : {};
-    list.push({ z, x, draw: () => { shadow(x, z, def.w * (y > 0 ? 0.6 : 0.9), y > 0 ? 0.2 : 0.35); if (blink) ctx.globalAlpha = 0.65; drawObj(img, x, y, z, def.px, sq); ctx.globalAlpha = 1; } });
+    let sq = flinch > 0 ? { sx: 1 + flinch * 1.2, sy: 1 - flinch * 1.0 } : {}, im2 = img;
+    if (hx && hx.hs > 0) { const h = hx.hs; sq = { sx: 1 + 0.38 * h, sy: 1 - 0.45 * h, rotB: (hx.hsDir || 1) * 0.34 * h, dx: (hx.hsJ || 0) * 3 * h }; }   // 맞은 경직: 눌리고 꺾임
+    if (hx && hx.dmgK > 0 && !fl) im2 = variant(img, '#c01818|' + (Math.round(hx.dmgK * 5) / 5 * 0.55).toFixed(2));
+    list.push({ z, x, draw: () => { shadow(x, z, def.w * (y > 0 ? 0.6 : 0.9), y > 0 ? 0.2 : 0.35); if (blink) ctx.globalAlpha = 0.65; drawObj(im2, x, y, z, def.px, sq); ctx.globalAlpha = 1; } });
   };
   if (e.struct) {
     const fr = e.door > 0 ? 1 : 0, z = ez(e), img = e.flash > 0 ? variant(D.fr[fr], 'white') : D.fr[fr];
@@ -1177,8 +1179,8 @@ function enemyDrawers(e, list) {
     if (e.walker.alive) one(e.walker.def, e.walker.x, 0, walkerZ(e), e.walker.bob, false, 0);
     return;
   }
-  if (e.members) { for (const m of e.members) if (m.alive) one(D, e.x + m.dx + e.kx, 0, ez(e) + m.dz, m.bob, e.flash > 0, m.flinch); }
-  else one(D, e.x + e.kx, eAlt(e), ez(e), e.bob, e.flash > 0, e.flinch);
+  if (e.members) { for (const m of e.members) if (m.alive) one(D, e.x + m.dx + e.kx, 0, ez(e) + m.dz, m.bob, e.flash > 0 || m.hs > 0.7, m.flinch, m); }
+  else one(D, e.x + e.kx, eAlt(e), ez(e), e.bob, e.flash > 0, e.flinch, e);
 }
 
 /* ---------------- 맞음·처치 (경직·날려 보내기 크게) ---------------- */
@@ -1306,18 +1308,50 @@ function areaHit(e, x, z, rad, lv = 2) {
 /* ---------------- 헬포드: 쾅! 찍어서 처치 ---------------- */
 function podFx(e, k) {
   const fx = mkFx(), c = centerOf(e), tx = c.x, tz = c.z; fx.end = 2.6; fx.target = e; G.throwT = 0.3;
+  const PV = POV_ON.has(k), F0 = 0.48, F1 = PV ? 1.5 : 0.78, Y0 = PV ? 70 : 30, name = (STRATS.find(s => s.k === k) || {}).n || '';
   beacon(fx, tx, tz, '#5ac4ff', 0.6);
-  let y = 30;
-  fx.at(0.48, () => sfx.podFall(0.3));
-  fx.tick = () => { if (fx.t > 0.5 && fx.t < 0.78) { y = 30 * (1 - (fx.t - 0.5) / 0.28); P3({ x: tx, y: y + 1.6, z: tz, kind: 'fire', max: 0.2, r: 0.14 }); P3({ x: tx + rand(-0.1, 0.1), y: y + 2.2, z: tz, kind: 'smoke', max: 0.5, r: 0.15 }); } };
-  fx.at(0.78, () => {
-    y = 0; sfx.slam(1); killTarget(e, 'fling', 3); addShake(0.25, 0, 5);
+  let y = Y0, pv = null;
+  fx.at(F0, () => sfx.podFall(F1 - F0));
+  fx.tick = () => { if (fx.t > F0 && fx.t < F1) { const q = (fx.t - F0) / (F1 - F0); y = Y0 * Math.pow(1 - q, PV ? 1.6 : 1); if (pv) pv.alt = y; P3({ x: tx, y: y + 1.6, z: tz, kind: 'fire', max: 0.2, r: 0.14 }); P3({ x: tx + rand(-0.1, 0.1), y: y + 2.2, z: tz, kind: 'smoke', max: 0.5, r: 0.12 }); } };
+  // 헬포드에 타고 강하: 표적이 점점 커지다 쾅 → 땅 카메라로 결과
+  if (PV) fx.at(F0 + 0.02, () => {
+    pv = { kind: 'pod', fx, e, hideLouis: true, ground: true, phase: 'fall', label: name, alt: Y0,
+      cam: P => {
+        if (P.phase === 'fall') { const yy = y + 2.4, pitch = 1.2; setVC({ on: true, x: tx + 0.2 + Math.sin(fx.t * 31) * 0.03 * (yy / 70), y: yy, z: tz - yy / Math.tan(pitch) * 0.98, yaw: 0, pitch, cy: H * 0.5, f: FOCAL * 0.95 });
+          const q = proj(tx, 0.5, tz); P.speed = 2.4; P.foe = [q.x, q.y]; P.roll = Math.sin(fx.t * 9) * 0.02; }
+        else { const g = P.t - (P.t0 || 0); setVC({ on: true, x: tx + 2.8 - g * 0.15, y: 1.25, z: tz - 7.2 + g * 0.3, yaw: -0.3, pitch: 0.03, cy: H * 0.55, f: FOCAL * 1.05 }); P.speed = 0; P.roll = 0; }
+      } };
+    enterPOV(pv);
+  });
+  // 장비별 마무리 연출 (땅 카메라에서)
+  const tail = { 'b-hellbomb': 1.9, 'm-ap': 1.3, 'm-fire': 1.3, 'm-gas': 1.3, 'm-at': 1.3, 'b-c4': 0.9 }[k] || 0.7;
+  const mines = k.startsWith('m-') ? Array.from({ length: 6 }, (_, i) => ({ x: tx + Math.cos(i * 1.05) * rand(1.2, 2.2), z: tz + Math.sin(i * 1.05) * rand(0.8, 1.8), at: F1 + 0.35 + i * 0.13, done: false })) : [];
+  fx.at(F1, () => {
+    y = 0; sfx.slam(1); killTarget(e, 'fling', 3); addShake(PV ? 0.9 : 0.25, 0, 5); if (PV) { stopFor(0.16, true); flash(0.9, '#ffffff'); }
     decals.push({ kind: 'ring', x: tx, z: tz, r: 0.3, grow: 6, life: 0, max: 0.5 }); decals.push({ kind: 'scorch', x: tx, z: tz, r: 0.8, life: 0, max: 14 });
     dust3(tx, tz, 18, 0.6);
-    if (k === 'm-fire') flames3(tx, tz, 1.4, 1.2); if (k === 'm-gas') cloud3(tx, tz, 1.6, ['#78be3c', '#b4e66e', '#5a9a2a']); if (k === 'm-at' || k === 'b-hellbomb') boom3(tx, tz, k === 'b-hellbomb' ? 2.4 : 1.2, { quiet: true });
-    if (k === 'b-c4') setTimeout(() => boom3(tx, tz, 1.6), 300);
+    if (k === 'm-fire') flames3(tx, tz, 1.4, 1.2); if (k === 'm-gas') cloud3(tx, tz, 1.6, ['#78be3c', '#b4e66e', '#5a9a2a']); if (k === 'm-at') boom3(tx, tz, 1.2, { quiet: true });
+    if (pv) { pv.phase = 'ground'; pv.t0 = pv.t; }
+    if (k === 'b-supply') for (let i = 0; i < 4; i++) P3({ x: tx + rand(-0.3, 0.3), y: 1.4, z: tz, vx: rand(-3, 3), vy: rand(4, 7), vz: rand(-2, 1), g: 16, kind: 'crate', max: 1.4 });
+    if (k === 'b-shield' || k === 'b-directional' || k === 'b-ballistic' || k === 's-relay') { GUN.stun(); for (let j = 0; j < 3; j++) decals.push({ kind: 'ring', x: tx, z: tz, r: 0.4, grow: 5 + j * 2, life: -j * 0.08, max: 0.7 }); sparks3(tx, 1.2, tz, 24, ['#5ac4ff', '#bff0ff', '#ffffff'], 5); }
+    if (k === 'b-jump' || k === 'b-hover') for (let j = 0; j < 14; j++) P3({ x: tx + rand(-0.4, 0.4), y: 0.3, z: tz, vx: rand(-3, 3), vy: rand(-1, 1), vz: rand(-2, 2), drag: 2, kind: 'fire', max: 0.5, r: rand(0.1, 0.25) });
+    if (k === 'b-warp') { flash(0.5, '#9ad0ff'); sparks3(tx, 1, tz, 30, ['#9ad0ff', '#ffffff', '#5a78ff'], 7); }
   });
-  fx.drawers.push(() => { if (fx.t > 0.5) { ctx.globalAlpha = clamp((fx.end - fx.t) / 0.4, 0, 1); drawObj(SPR_POD, tx, Math.max(0, y), tz, 0.09); ctx.globalAlpha = 1; } });
+  for (const m of mines) fx.at(m.at, () => {   // 지뢰: 흩뿌려진 지뢰가 차례로 터짐
+    m.done = true; boom3(m.x, m.z, k === 'm-at' ? 1.1 : 0.6, { quiet: true }); osc({ f: 160, f2: 50, d: 0.2, v: 0.25 });
+    if (k === 'm-fire') flames3(m.x, m.z, 0.6, 0.8); if (k === 'm-gas') cloud3(m.x, m.z, 1.0, ['#78be3c', '#b4e66e', '#5a9a2a']); addShake(0.15);
+  });
+  if (k === 'b-hellbomb') {   // 휴대용 지옥폭탄: 3 · 2 · 1 → 대폭발
+    [0, 0.4, 0.8].forEach((d, i) => fx.at(F1 + 0.3 + d, () => { osc({ f: 1300, d: 0.12, v: 0.12, type: 'square' }); if (pv) pv.count = 3 - i; }));
+    fx.at(F1 + 1.3, () => { if (pv) pv.count = 0; boom3(tx, tz, 4.5); flash(1, '#ffffff'); addShake(1.1, 0, 8); slowmo(0.9, 0.3); stopFor(0.2, true); for (let j = 0; j < 4; j++) decals.push({ kind: 'ring', x: tx, z: tz, r: 0.6, grow: 16 + j * 6, life: -j * 0.08, max: 0.8 }); });
+  }
+  if (k === 'b-c4') fx.at(F1 + 0.35, () => { osc({ f: 900, d: 0.05, v: 0.1, type: 'square' }); boom3(tx, tz, 1.6); fx.at(fx.t + 0.18, () => boom3(tx + 0.8, tz + 0.4, 1.1)); });
+  if (PV) { fx.end = F1 + tail + 0.6; fx.at(F1 + tail + 0.4, () => { if (POV && POV.fx === fx) exitPOV(); }); }
+  fx.drawers.push(() => {
+    if (fx.t > F0 && !(pv && POV === pv && pv.phase === 'fall')) { ctx.globalAlpha = clamp((fx.end - fx.t) / 0.4, 0, 1); drawObj(SPR_POD, tx, Math.max(0, y), tz, 0.09); ctx.globalAlpha = 1;
+      if (k === 'b-hellbomb' && fx.t > F1 && fx.t < F1 + 1.3 && ((fx.t * 8) | 0) % 2) { const q = proj(tx, 1.6, tz); glow(q.x, q.y, 10, '#ff2424', 1); light(q.x, q.y, 80, '#ff2424', 0.9); } }
+    for (const m of mines) if (!m.done && fx.t > F1 + 0.1) { const q = proj(m.x, 0.05, m.z); if (q.zc < 0.6) continue; circ(q.x, q.y, Math.max(1.5, q.s * 0.12), '#2a2e36', 0.4); if (((fx.t * 10) | 0) % 2) glow(q.x, q.y - 1, 3, '#ff2424', 1); }
+  });
   fx.zf = () => tz - 0.05; return fx;
 }
 
@@ -1326,15 +1360,19 @@ function orbitalFx(e, k) {
   const fx = mkFx(), c = centerOf(e), tx = c.x, tz = c.z; fx.end = 2.4; fx.target = e; G.throwT = 0.3;
   beacon(fx, tx, tz, '#ff2424', 0.85);
   const mode = { 'o-precision': 'single', 'o-rail': 'rail', 'o-120': 'barrage', 'o-380': 'barrage', 'o-walking': 'walk', 'o-gatling': 'gatling', 'o-napalm': 'napalm', 'o-airburst': 'air', 'o-gas': 'gas', 'o-ems': 'ems', 'o-smoke': 'smoke', 'o-laser': 'laser' }[k] || 'single';
-  const POVO = POV_ON.has(k) && (mode === 'single' || mode === 'rail');   // 구축함 → 아틀라스 캐넌 → 착탄
+  const POVO = POV_ON.has(k), SR = mode === 'single' || mode === 'rail';   // 구축함 → 포격 → 착탄 (궤도 12종 모두)
   // 장면 시각: 레일캐넌은 먼저 궤도 레이저가 표적을 잡고(약 1.2초) 구축함으로 넘어감
   const RL = POVO && mode === 'rail', T0 = RL ? 1.55 : 0.62, T1 = T0 + 0.93, TF = T1 + 0.45, TG = T1 + 0.95, TI = TG + (RL ? 0.25 : 0.35);
   if (mode !== 'laser') fx.at(POVO ? TG - 0.05 : 0.55, () => sfx.whistle());
-  const shells = [];
-  const add = (t, x, z, Rr) => shells.push({ t, x, z, R: Rr });
-  if (mode === 'single' || mode === 'rail' || mode === 'gas' || mode === 'ems' || mode === 'smoke') add(POVO ? TI : 0.82, tx, tz, mode === 'single' ? 1.9 : mode === 'rail' ? 1.6 : 0.6);
-  if (POVO) {
-    fx.end = TI + 1.35; let op = null;
+  const shells = [], OFF = POVO && !SR ? TI - 0.8 : 0, LO = POVO ? TG + 0.15 - 0.75 : 0;   // 포격류는 착탄을 구축함 장면 뒤로 미룸
+  const add = (t, x, z, Rr) => shells.push({ t: t + (SR ? 0 : OFF), x, z, R: Rr });
+  const STYLE = { single: { n: 1, col: 'std', lab: '아틀라스 캐넌' }, rail: { n: 1, col: 'rail', lab: '레일캐넌' },
+    barrage: k === 'o-380' ? { n: 7, gap: 0.12, col: 'std', lab: '380mm 고폭 포대', big: true } : { n: 6, gap: 0.09, col: 'std', lab: '120mm 고폭 포대' },
+    walk: { n: 6, gap: 0.1, col: 'std', lab: '이동 포격' }, gatling: { n: 14, gap: 0.035, col: 'std', lab: '개틀링 포대', small: true }, napalm: { n: 6, gap: 0.09, col: 'napalm', lab: '네이팜 포대' },
+    air: { n: 3, gap: 0.15, col: 'std', lab: '공중폭발 포대' }, gas: { n: 1, col: 'gas', lab: '가스 포탄' }, ems: { n: 1, col: 'ems', lab: 'EMS 포탄' }, smoke: { n: 1, col: 'smoke', lab: '연막 포탄' }, laser: { n: 1, col: 'laser', lab: '궤도 레이저', beam: true } }[mode];
+  if (mode === 'single' || mode === 'rail' || mode === 'gas' || mode === 'ems' || mode === 'smoke') add(SR && POVO ? TI : 0.82, tx, tz, mode === 'single' ? 1.9 : mode === 'rail' ? 1.6 : 0.6);
+  const cine = () => {
+    const LAST = mode === 'laser' ? 2.0 + LO : Math.max(TI, ...shells.map(sh => sh.t)); fx.end = LAST + 1.35; let op = null;
     const LS = { x: tx + 16, y: 80, z: tz + 46 };   // 궤도 레이저가 내려오는 방향 (하늘 오른쪽 뒤)
     const dotAt = () => { const a = aimOf(e), j = RL ? clamp(1 - (fx.t - 0.35) / 0.75, 0, 1) : 0; return { x: a.x + Math.sin(fx.t * 17) * 0.9 * j, y: a.y + Math.cos(fx.t * 13) * 0.6 * j, z: a.z }; };
     if (RL) {   // 1) 조준: 빨간 레이저가 하늘에서 내려와 흔들리다 표적에 고정
@@ -1354,27 +1392,34 @@ function orbitalFx(e, k) {
         }
       };
     }
-    fx.at(T0, () => { op = { kind: 'orbit', fx, e, space: true, shot: 1, rail: RL }; enterPOV(op); });
+    fx.at(T0, () => { op = { kind: 'orbit', fx, e, space: true, shot: 1, rail: RL, style: STYLE }; enterPOV(op); });
     fx.at(T1, () => { if (!op) return; op.shot = 2; op.t = 0; op.fireAt = 0.45; flash(0.5, '#ffffff'); nz({ type: 'bandpass', f: 900, f2: 200, d: 0.25, v: 0.15 }); });
+    for (let i = 1; i < (STYLE.n || 1); i++) fx.at(TF + i * (STYLE.gap || 0), () => { osc({ f: STYLE.small ? 140 : 80, f2: 35, d: STYLE.small ? 0.15 : 0.4, v: STYLE.small ? 0.15 : 0.3 }); addShake(STYLE.small ? 0.1 : 0.3, -2, 3); });
     fx.at(TF, () => { osc({ f: RL ? 110 : 70, f2: 28, d: 0.9, v: 0.5, dist: true }); nz({ type: 'lowpass', f: RL ? 3200 : 1600, f2: 120, d: 1.1, v: 0.45 }); if (RL) nz({ type: 'bandpass', f: 4000, f2: 600, d: 0.35, v: 0.2 }); addShake(0.8, -4, 6); stopFor(0.08, true); flash(0.35, RL ? '#d8e8ff' : '#fff0d0'); });
     fx.at(TG, () => { if (!op) return; op.space = false; op.ground = true; op.t = 0; op.hideLouis = true; flash(0.6, '#ffffff');
       op.cam = P => { const a = clamp(P.t / (TI - TG), 0, 1), sh = fx.t < TI ? a * a * 0.06 : 0;   // 다가올수록 화면을 당기고 떨림
-        setVC({ on: true, x: tx + 1.1 + P.t * 0.25 + rand(-1, 1) * sh, y: 1.0 + rand(-1, 1) * sh, z: tz - 10.5 + P.t * 0.4, pitch: -0.16, cy: H * 0.56, f: FOCAL * (1 + 0.28 * a * a) }); }; });
+        setVC({ on: true, x: tx + 1.1 + P.t * 0.25 + rand(-1, 1) * sh, y: SR ? 1.0 : 1.5, z: tz - (SR ? 10.5 : 13.5) + P.t * 0.4, pitch: SR ? -0.16 : -0.08, cy: H * 0.56, f: FOCAL * (1 + (SR ? 0.28 : 0.12) * a * a) }); }; });
     fx.at(TI - 0.13, () => { if (!op) return; for (let i = 0; i < 26; i++) { const a = i / 26 * 6.283, v = rand(3, 6); P3({ x: tx + Math.cos(a) * 0.4, y: 0.1, z: tz + Math.sin(a) * 0.3, vx: Math.cos(a) * v, vy: rand(0.2, 0.8), vz: Math.sin(a) * v * 0.6, drag: 2.4, kind: 'smoke', max: rand(0.5, 0.9), r: rand(0.15, 0.35) }); } });   // 풍압에 먼지가 먼저 밀려남
     fx.at(TI, () => { slowmo(0.7, 0.25); });
-    fx.at(TI + 0.9, () => { if (POV && POV.fx === fx) exitPOV(); });
-    fx.drawers.push(() => { if (!(op && op.ground) || fx.t > TI) return; const k2 = clamp((fx.t - TG) / (TI - TG), 0, 1), y = 70 * (1 - k2 * k2), a = proj(tx, y, tz), b = proj(tx, y + 40, tz), m = proj(tx, y + 6, tz);
+    fx.at(LAST + 0.9, () => { if (POV && POV.fx === fx) exitPOV(); });
+    if (!SR) fx.drawers.push(() => {   // 포격류: 포탄마다 내리꽂히는 줄
+      if (!(op && op.ground)) return; const C = { gas: '#b4e66e', ems: '#9ad0ff', smoke: '#d0ccc4', napalm: '#ff8a40' }[mode] || '#ffd080';
+      for (const sh of shells) { const d = sh.t - fx.t; if (d < 0 || d > 0.32) continue; const k2 = 1 - d / 0.32, y0 = mode === 'air' ? 3.2 : 0, y = y0 + 60 * (1 - k2 * k2), a = proj(sh.x, y, sh.z), b = proj(sh.x, y + 26, sh.z); if (a.zc < 0.6) continue;
+        const w = Math.max(1.5, a.s * 0.1); ctx.globalAlpha = 0.5; line(b.x, b.y, a.x, a.y, C, w * 2); ctx.globalAlpha = 1; line(b.x, b.y, a.x, a.y, '#ffffff', w * 0.7); glow(a.x, a.y, 6 + 6 * k2, '#ffffff', 1); }
+    });
+    if (SR) fx.drawers.push(() => { if (!(op && op.ground) || fx.t > TI) return; const k2 = clamp((fx.t - TG) / (TI - TG), 0, 1), y = 70 * (1 - k2 * k2), a = proj(tx, y, tz), b = proj(tx, y + 40, tz), m = proj(tx, y + 6, tz);
       const w = Math.max(2, a.s * 0.14), C1 = RL ? '#d8e8ff' : '#ffe8b0', C2 = RL ? '#7ab8ff' : '#ffb060';   // 포탄 꼬리 · 충격파 원뿔 · 머리 빛
       ctx.globalAlpha = 0.5; line(b.x, b.y, a.x, a.y, C1, w * 2.2); ctx.globalAlpha = 1; line(m.x, m.y, a.x, a.y, '#ffffff', w); glowLine(b.x, b.y, a.x, a.y, C2, 1);
       ctx.globalAlpha = 0.4; line(a.x, a.y, m.x - w * 3, m.y, '#ffffff', 0.8); line(a.x, a.y, m.x + w * 3, m.y, '#ffffff', 0.8); ctx.globalAlpha = 1;
       glow(a.x, a.y, 8 + 10 * k2, '#ffffff', 1); light(a.x, a.y, 90 + 120 * k2, RL ? '#c0d8ff' : '#ffe0a0', 0.6 + 0.6 * k2);
       const g0 = proj(tx, 0, tz); light(g0.x, g0.y, 60 + 80 * k2, RL ? '#c0d8ff' : '#ffd8a0', k2 * 0.7); });
-  }
-  else if (mode === 'barrage') { const n = k === 'o-380' ? 7 : 6, big = k === 'o-380'; for (let i = 0; i < n; i++) add(0.8 + i * (big ? 0.26 : 0.2), i === 0 ? tx : tx + rand(-1.8, 1.8) * (big ? 1.3 : 1), i === 0 ? tz : tz + rand(-1.5, 2) * (big ? 1.3 : 1), big ? 1.5 : 0.95); }
+  };
+  if (mode === 'barrage') { const n = k === 'o-380' ? 7 : 6, big = k === 'o-380'; for (let i = 0; i < n; i++) add(0.8 + i * (big ? 0.26 : 0.2), i === 0 ? tx : tx + rand(-1.8, 1.8) * (big ? 1.3 : 1), i === 0 ? tz : tz + rand(-1.5, 2) * (big ? 1.3 : 1), big ? 1.5 : 0.95); }
   else if (mode === 'walk') { for (let i = 0; i < 6; i++) add(0.8 + i * 0.22, tx + rand(-0.5, 0.5), tz - 2.5 + i * 1.0, 1.0); }
   else if (mode === 'gatling') { for (let i = 0; i < 14; i++) add(0.8 + i * 0.07, tx + rand(-1.6, 1.6), tz + rand(-1.4, 1.8), 0.5); }
   else if (mode === 'napalm') { for (let i = 0; i < 6; i++) add(0.8 + i * 0.18, tx + rand(-1.6, 1.6), tz + rand(-1.2, 1.8), 0.6); }
   else if (mode === 'air') { for (let i = 0; i < 3; i++) add(0.8 + i * 0.25, tx + rand(-1, 1), tz + rand(-0.8, 1.4), 0.7); }
+  if (POVO) cine();
   shells.forEach((sh, i) => fx.at(sh.t, () => {
     const last = i === shells.length - 1;
     if (mode === 'air') {
@@ -1389,19 +1434,20 @@ function orbitalFx(e, k) {
     else areaHit(e, sh.x, sh.z, sh.R * 1.3 + 0.4, 2);
   }));
   if (mode === 'laser') {
-    fx.end = 2.6;
-    fx.at(0.7, () => { osc({ f: 90, d: 1.4, v: 0.25, type: 'sawtooth', am: [30, 0.4], dist: true }); nz({ type: 'highpass', f: 2500, d: 1.4, v: 0.18 }); });
+    fx.end = Math.max(fx.end, 2.6 + LO);
+    fx.at(0.7 + LO, () => { osc({ f: 90, d: 1.4, v: 0.25, type: 'sawtooth', am: [30, 0.4], dist: true }); nz({ type: 'highpass', f: 2500, d: 1.4, v: 0.18 }); });
     let acc = 0;
     fx.tick = dt => {
-      if (fx.t > 0.75 && fx.t < 2.0) {
-        const lx = tx - 1.5 + (fx.t - 0.75) * 2.4;
+      const lt = fx.t - LO;
+      if (lt > 0.75 && lt < 2.0) {
+        const lx = tx - 1.5 + (lt - 0.75) * 2.4;
         for (let j = 0; j < 2; j++) P3({ x: lx + rand(-0.2, 0.2), y: 0.1, z: tz + rand(-0.3, 0.3), vx: rand(-0.5, 0.5), vy: rand(1, 3), kind: 'fire', max: 0.5, r: rand(0.1, 0.25) });
         acc += dt; if (acc > 0.15 && !e.dead) { acc = 0; areaHit(e, lx, tz, 1.2, 1); }
-        if (fx.t > 1.5) killTarget(e, 'burn', 3);
+        if (lt > 1.5) killTarget(e, 'burn', 3);
         addShake(0.02);
       }
     };
-    fx.drawers.push(() => { if (fx.t > 0.75 && fx.t < 2.0) { const lx = tx - 1.5 + (fx.t - 0.75) * 2.4, a = proj(lx, 0, tz), b = proj(lx, 30, tz), w = Math.max(2, a.s * 0.25); rect(a.x - w - 2, b.y, w * 2 + 4, a.y - b.y, '#e23e1c'); rect(a.x - w, b.y, w * 2, a.y - b.y, '#ff8c1e'); rect(a.x - w / 2, b.y, w, a.y - b.y, '#fff096'); circ(a.x, a.y, w * 1.6 + Math.random() * 2, '#ff8c1e', 0.4); } });
+    fx.drawers.push(() => { const lt = fx.t - LO; if (lt > 0.75 && lt < 2.0) { const lx = tx - 1.5 + (lt - 0.75) * 2.4, a = proj(lx, 0, tz), b = proj(lx, 30, tz), w = Math.max(2, a.s * 0.25); rect(a.x - w - 2, b.y, w * 2 + 4, a.y - b.y, '#e23e1c'); rect(a.x - w, b.y, w * 2, a.y - b.y, '#ff8c1e'); rect(a.x - w / 2, b.y, w, a.y - b.y, '#fff096'); circ(a.x, a.y, w * 1.6 + Math.random() * 2, '#ff8c1e', 0.4); } });
   }
   fx.drawers.push(() => {
     for (const sh of shells) {
@@ -1734,6 +1780,14 @@ function weaponFx(key, e, k2) {
   fx.at(0.3, () => { podY = 0; sfx.slam(0.85); stopFor(0.1, true); addShake(0.5, 0, 4); flash(0.4); punch = Math.max(punch, 0.05); dust3(pod.x, pod.z, 12, 0.5); decals.push({ kind: 'ring', x: pod.x, z: pod.z, r: 0.2, grow: 4, life: 0, max: 0.4 }); decals.push({ kind: 'scorch', x: pod.x, z: pod.z, r: 0.5, life: 0, max: 10 }); });
   if (ST) { fx.at(0.42, () => GUN.hatch()); fx.at(0.55, () => sfx.deploy()); } else fx.at(0.45, () => { G.armed = w.c; });
   const SINK = ST ? 0.82 : 0.62;   // 내용물을 꺼내면 헬포드는 땅속으로 접혀 사라짐 (시야 확보)
+  let sv = null;
+  if (ST && POV_ON.has(key)) fx.at(T0 - 0.08, () => {   // 센트리 조준 카메라로
+    sv = { kind: 'sentry', fx, e, ST, hideLouis: true, ground: true, label: (STRATS.find(s => s.k === key) || {}).n || '',
+      cam: P => { const a = aim(), E = { x: head.x, y: head.y + (ST === 'tesla' ? 0.1 : 0.18), z: head.z - 0.3 }, dx = a.x - E.x, dz = a.z - E.z, dist = Math.hypot(dx, dz) || 1;
+        P.yaw = P.t < 0.02 ? Math.atan2(dx, dz) : lerp(P.yaw, Math.atan2(dx, dz), 0.25); P.rc = rc / 3;
+        setVC({ on: true, x: E.x, y: E.y + (rc > 0 ? rand(-0.02, 0.02) : 0), z: E.z, yaw: P.yaw, pitch: Math.atan2(E.y - a.y, dist), cy: H * 0.5, f: FOCAL * clamp(dist / 5, 1.3, 2.4) }); } };
+    enterPOV(sv);
+  });
   fx.at(SINK, () => { dust3(pod.x, pod.z, 8, 0.35); GUN.hiss(); });
 
   if (w.c === 'gun') {
@@ -1846,15 +1900,16 @@ function weaponFx(key, e, k2) {
     for (const b of fx.beams) b.t += dt;
     if (rc > 0) rc = Math.max(0, rc - dt * 16);
     if (!finished && fx.t > 5) finish();
+    if (sv && POV === sv && finished && fx.t > fx.doneAt + 0.7) exitPOV();
     if (finished && fx.t > fx.doneAt + 0.5) { G.armed = null; }
   };
   fx.end = 99; const baseRun = fx.tick;
-  fx.tick = dt => { baseRun(dt); if (finished && fx.t > fx.doneAt + 0.6) fx.end = 0; };
+  fx.tick = dt => { baseRun(dt); if (finished && fx.t > fx.doneAt + (sv ? 0.8 : 0.6)) fx.end = 0; };
   fx.drawers.push(() => {
     const fade = finished ? clamp(1 - (fx.t - fx.doneAt - 0.3) / 0.3, 0, 1) : 1;
     ctx.globalAlpha = fade;
     { const sk = clamp((fx.t - SINK) / 0.28, 0, 1); if (sk < 1) drawObj(SPR_POD, pod.x, Math.max(0, podY), pod.z, ST ? 0.075 : 0.065, { sy: 1 - sk * sk, sx: 1 + sk * 0.15 }); }
-    if (ST) drawSentry3(ST, head, clamp((fx.t - 0.42) / 0.35, 0, 1), rc, fx, aim());
+    if (ST && !(sv && POV === sv)) drawSentry3(ST, head, clamp((fx.t - 0.42) / 0.35, 0, 1), rc, fx, aim());
     ctx.globalAlpha = 1;
     if (fx.flag) { const q = proj(fx.flag.x, 0, fx.flag.z), u = q.s; rect(q.x, q.y - u * 0.9, 1, u * 0.9, '#c4ccd6'); rect(q.x + 1, q.y - u * 0.9, u * 0.45, u * 0.3, '#ffe710'); rect(q.x + 1 + u * 0.15, q.y - u * 0.85, u * 0.12, u * 0.18, '#1c1e26'); }
   });
@@ -1913,6 +1968,13 @@ function droneFx(k, e) {
   fx.at(0.5, () => { GUN.hatch(); G.pack = true; });
   fx.at(0.78, () => { dust3(pod.x, pod.z, 8, 0.35); });
   fx.at(0.62, () => { dr.on = true; osc({ f: 180, f2: 320, d: 0.5, v: 0.06, type: 'sawtooth', am: [45, 0.5] }); GUN.deploy && sfx.deploy(); });
+  let dv = null;
+  if (POV_ON.has(k)) fx.at(T0 - 0.15, () => {   // 드론 카메라로
+    dv = { kind: 'drone', fx, e, hideLouis: true, ground: true, label: (STRATS.find(s => s.k === k) || {}).n || '',
+      cam: P => { const a = aim(), E = { x: dr.x, y: dr.y + 0.12, z: dr.z - 0.35 }, dx = a.x - E.x, dz = a.z - E.z, dist = Math.hypot(dx, dz) || 1;
+        setVC({ on: true, x: E.x, y: E.y, z: E.z, yaw: Math.atan2(dx, dz), pitch: Math.atan2(E.y - a.y, dist), cy: H * 0.5, f: FOCAL * clamp(dist / 5, 1.2, 2.2) }); P.roll = Math.sin(fx.t * 3) * 0.03; P.speed = 0.05; } };
+    enterPOV(dv);
+  });
   if (D.w === 'gun') for (let i = 0; i < D.n; i++) fx.at(T0 + i * D.r, () => { GUN.stalwart(); const m = mz(), a = aim(); muzzle3(m, 0.07); tracer3(m, { x: a.x + rand(-0.1, 0.1), y: a.y + rand(-0.1, 0.1), z: a.z }, D.tr, 0.07); sparks3(a.x, a.y, a.z, 3, e.def.gore); if (i === D.n - 1) finish('fling', 2); else hitEnemy(e, 1, 1); });
   if (D.w === 'beam') { fx.at(T0, () => { GUN.lasBeam(); setTimeout(() => GUN.lasBeam(), 550); fx.beams.push({ k: 'las', t: 0, d: 0.9 }); }); fx.at(T0 + 0.8, () => finish('burn', 2)); }
   if (D.w === 'arc') for (let i = 0; i < D.n; i++) fx.at(T0 + i * D.r, () => { GUN.arc(); fx.beams.push({ k: 'arc', t: 0, d: 0.16 }); const a = aim(); sparks3(a.x, a.y, a.z, 14, ['#bed2ff', '#ffffff', '#5a78ff'], 6); if (i === D.n - 1) finish('fling', 2); else hitEnemy(e, 2, 3); });
@@ -1932,10 +1994,11 @@ function droneFx(k, e) {
     }
     for (const b of fx.beams) b.t += dt;
     if (!finished && fx.t > 5) finish('boom');
+    if (dv && POV === dv && finished && fx.t > doneAt + 0.6) exitPOV();
     if (finished && fx.t > doneAt + 1.1) { fx.end = 0; G.pack = false; }
   };
   fx.drawers.push(() => { const sk = clamp((fx.t - 0.78) / 0.28, 0, 1); if (sk < 1) drawObj(SPR_POD, pod.x, Math.max(0, podY), pod.z, 0.065, { sy: 1 - sk * sk, sx: 1 + sk * 0.15 }); });
-  fx.drone = () => dr.on ? { z: dr.z, draw: () => { if (finished && fx.t > doneAt + 0.8) ctx.globalAlpha = clamp(1 - (fx.t - doneAt - 0.8) / 0.3, 0, 1); drawDrone(dr, D.col, fx.t); ctx.globalAlpha = 1; } } : null;
+  fx.drone = () => dr.on && !(dv && POV === dv) ? { z: dr.z, draw: () => { if (finished && fx.t > doneAt + 0.8) ctx.globalAlpha = clamp(1 - (fx.t - doneAt - 0.8) / 0.3, 0, 1); drawDrone(dr, D.col, fx.t); ctx.globalAlpha = 1; } } : null;
   fx.drawers2 = () => {
     if (!dr.on) return;
     const m0 = mz(), m = proj(m0.x, m0.y, m0.z), a0 = aim(), a = proj(a0.x, a0.y, a0.z);
@@ -1997,6 +2060,7 @@ function vehicleFx(k, e) {
   const fx = mkFx(), projs = []; fx.target = e; fx.end = 99; G.throwT = 0.3;
   const v = { x: LX + (V.t === 'tank' ? 1.9 : 1.6), z: LZ + (V.t === 'tank' ? 2.9 : 2.3), y: 25, landed: false, frame: true, st: {}, vz: 0 };
   const POVX = V.t === 'exo' && POV_ON.has(k);   // 탑승 1인칭
+  const POVV = V.t !== 'exo' && POV_ON.has(k);   // 차량: 사수석 · 운전석 · 잠망경
   const st = v.st, gore = e.def.gore, LAND = 1.0, A = POVX ? 1.8 : 1.3;
   let finished = false, doneAt = 0, tick = null, ram = false, gone = false;
   const finish = (how = 'boom', lv = 2) => { if (finished) return; killTarget(e, how, lv); finished = true; doneAt = fx.t; };
@@ -2019,6 +2083,17 @@ function vehicleFx(k, e) {
           P.rL = (st.r0 || 0) / 3; P.rR = (st.r1 || 0) / 3; P.bash = V.arm === 'break' && ft > 0.6 && ft < 1.0 ? Math.sin((ft - 0.6) / 0.4 * Math.PI) : 0; }
         const walk = st.walk ? Math.abs(Math.sin(fx.t * 13)) * 0.14 : 0, bob = Math.sin(fx.t * 2.2) * 0.03 - walk, a0 = aimOf(e), back = V.arm === 'break' ? 1.6 : 0.2, zoom = clamp((a0.z - v.z) / 9, 1.2, 2.6); P.walk = walk;
         setVC({ on: true, x: v.x + (a0.x - v.x) * 0.15, y: 2.5 + bob, z: v.z - back + (P.bash || 0) * 0.5, pitch: -0.02, cy: HZ + 6, f: FOCAL * zoom }); } }));
+  }
+  if (POVV) {
+    const vk = V.arm === 'supply' ? 'drive' : V.t === 'tank' ? 'tank' : 'gun', name = (STRATS.find(s => s.k === k) || {}).n || '';
+    fx.at(A - 0.12, () => enterPOV({ kind: 'veh', fx, e, vk, hideLouis: true, ground: true, label: name, flame: V.arm === 'inc', loaded: V.arm !== 'bast',
+      cam: P => {
+        const a = aimOf(e), E = vk === 'drive' ? { x: v.x - 0.35, y: 1.45, z: v.z + 0.7 } : vk === 'tank' ? { x: v.x, y: 2.1, z: v.z + 0.4 } : { x: v.x, y: 2.35, z: v.z - 0.3 };
+        const dx = a.x - E.x, dz = Math.max(0.5, a.z - E.z), dist = Math.hypot(dx, dz);
+        P.rc = Math.max(st.r1 || 0, st.r0 || 0, (st.recoil || 0) * 3) / 2; P.spd = v.vz; P.crash = ram && fx.t < doneAt + 0.5; if (V.arm === 'bast') P.loaded = fx.t < A + 0.65 || fx.t > A + 1.6;
+        const shake = (P.rc > 0.5 ? rand(-0.03, 0.03) : 0) + (vk === 'drive' && st.drive ? rand(-0.02, 0.02) : 0);
+        setVC({ on: true, x: E.x, y: E.y + shake, z: E.z, yaw: vk === 'drive' ? Math.atan2(dx, dz) * 0.5 : Math.atan2(dx, dz), pitch: vk === 'drive' ? 0.02 : Math.atan2(E.y - a.y, dist), cy: H * 0.5, f: FOCAL * (vk === 'drive' ? 1.0 : clamp(dist / 5, 1.3, vk === 'tank' ? 3 : 2.4)) });
+      } }));
   }
   if (V.arm === 'patriot') {
     fx.at(A, () => GUN.spin(0.32));
@@ -2085,7 +2160,7 @@ function vehicleFx(k, e) {
     for (const p of projs) stepProj(p, dt);
     for (const key of ['r0', 'r1', 'recoil', 'sq']) if (st[key] > 0) st[key] = Math.max(0, st[key] - dt * 6);
     if (!finished && fx.t > 6) finish();
-    if (POVX && POV && POV.fx === fx && finished && fx.t > doneAt + 0.9) exitPOV();
+    if ((POVX || POVV) && POV && POV.fx === fx && finished && fx.t > doneAt + (V.arm === 'supply' ? 0.7 : 0.9)) exitPOV();
     if ((gone && finished) || (finished && fx.t > doneAt + 1.3)) fx.end = 0;
   };
   fx.drawers.push(() => {
@@ -2119,8 +2194,8 @@ const SPACE = {}; for (const k in SPACE_IMG) { const im = new Image(); im.src = 
    - 맞는 순간을 가리지 않도록 카메라 자체를 옮김
    ============================================================ */
 const POV_Q = new URLSearchParams(location.search);
-const POV_KEYS = ['v-patriot', 'v-emancipator', 'v-lumberer', 'v-breakthrough', 'e-air', 'e-strafe', 'e-rocket', 'e-500', 'e-cluster', 'e-napalm', 'e-smoke', 'e-gas', 'o-precision', 'o-rail'];
-const POV_ON = new Set(POV_KEYS);   // 엑소 4종 · 이글 8종 · 궤도 정밀/레일
+const POV_KEYS = STRATS.map(s => s.k).filter(k => !k.startsWith('w-'));   // 지원 무기는 조준 모드, 나머지는 모두 시점 연출
+const POV_ON = new Set(POV_KEYS);
 if (POV_Q.get('pov') === 'off') POV_ON.clear();
 let POV = null;
 function enterPOV(o) { o.t = 0; POV = o; setVC({ yaw: 0, f: FOCAL }); camReset(); document.body.classList.add('cine'); flash(0.7, '#ffffff'); nz({ type: 'bandpass', f: 1800, f2: 300, d: 0.35, v: 0.22 }); }
@@ -2321,6 +2396,74 @@ function drawEagleHud(P) {
   if (P.hits) hudText('IMPACT ×' + P.hits, W / 2, H - 18, '#ffe060', 5, 'center');
   if (P.boost > 0 && ((t * 6) | 0) % 2) hudText('AFTERBURNER', 22, 34, '#ffb060', 4);
 }
+/* ---------------- 센트리 조준 카메라 ---------------- */
+function vignetteDark(a) { const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.62); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,' + a + ')'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+function camTarget(P, col) {   // 표적 상자 + 거리
+  const e = P.e; if (!e || e.dead) return; const a0 = aimOf(e), q = proj(a0.x, a0.y, a0.z); if (q.zc < 0.6) return;
+  const sz = Math.max(14, e.def.h * q.s * 0.9), sp = 1 + Math.sin(P.t * 8) * 0.06; bracket(q.x, q.y, sz * sp, sz * sp, col, 5);
+  hudText(Math.round(q.zc * 30 / Math.max(1, VCAM.f / FOCAL)) + 'm', q.x + sz * 0.6 + 3, q.y - sz * 0.4, col, 4);
+}
+function drawSentryCam(P) {
+  const t = P.t, G2 = '#7dffb4';
+  ctx.globalAlpha = 0.14; rect(0, 0, W, H, '#20ff80'); ctx.globalAlpha = 0.14; for (let y = 0; y < H; y += 2) rect(0, y, W, 0.5, '#000000'); ctx.globalAlpha = 1; vignetteDark(0.6);
+  const r = P.rc || 0, st = P.ST || '', mort = st === 'mortar' || st === 'empGL', tes = st === 'tesla';
+  if (!tes) {   // 총열 (아래 가운데에서 앞으로, 반동만큼 들어감)
+    const tip = { x: W / 2 + 3, y: (mort ? H * 0.58 : H * 0.74) + r * 4 }, bw = st === 'ac' || st === 'empAT' || mort ? 15 : 11;
+    poly([[W / 2 - bw * 1.8, H + 4], [W / 2 + bw * 1.8, H + 4], [tip.x + bw * 0.5, tip.y], [tip.x - bw * 0.5, tip.y]], '#1a1d22'); poly([[W / 2 - bw * 1.8, H + 4], [W / 2 - bw * 1.1, H + 4], [tip.x - bw * 0.25, tip.y], [tip.x - bw * 0.5, tip.y]], '#5a6270');
+    if (st === 'gatling') for (let i = 0; i < 3; i++) { const o = ((t * 26 + i / 3) % 1) * 10 - 5; line(W / 2 + o * 2, H + 4, tip.x + o * 0.6, tip.y, '#8a94a0', 1); }
+    if (r > 0.3) { glow(tip.x, tip.y - 2, 14 * r, st === 'flame' ? '#ff8a30' : st === 'laser' ? '#ff3020' : '#ffc060', 1); circ(tip.x, tip.y - 2, 4 * r, '#fff4c0'); }
+  } else { glow(W / 2, H - 10, 22 + Math.sin(t * 30) * 4, '#8ac8ff', 0.8); }
+  camTarget(P, '#7dffb4');
+  line(W / 2 - 8, H / 2, W / 2 - 3, H / 2, G2, 1); line(W / 2 + 3, H / 2, W / 2 + 8, H / 2, G2, 1); line(W / 2, H / 2 - 8, W / 2, H / 2 - 3, G2, 1); line(W / 2, H / 2 + 3, W / 2, H / 2 + 8, G2, 1);
+  hudText('SENTRY CAM · ' + (P.label || ''), 10, 26, G2, 5); if (((t * 2) | 0) % 2) { circ(W - 46, 23, 2, '#ff3a2a'); hudText('REC', W - 10, 26, '#ff3a2a', 4, 'right'); }
+  hudText(P.e && P.e.dead ? '표적 제거' : '자동 조준', 10, H - 10, P.e && P.e.dead ? '#ffe060' : G2, 5);
+}
+/* ---------------- 가드독 드론 카메라 ---------------- */
+function drawDroneCam(P) {
+  const t = P.t, C = '#9ad8ff';
+  vignetteDark(0.75); ctx.globalAlpha = 0.08; rect(0, 0, W, H, '#80c0ff'); ctx.globalAlpha = 1;
+  const bl = ((t * 30) | 0) % 2 ? 0.18 : 0.08; ctx.globalAlpha = bl; poly([[0, 0], [70, 0], [30, 26], [0, 18]], '#000000'); poly([[W, 0], [W - 70, 0], [W - 30, 26], [W, 18]], '#000000'); ctx.globalAlpha = 1;   // 프로펠러 그림자
+  ctx.strokeStyle = C; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(W / 2, H / 2, 26, 0, 6.283); ctx.stroke(); ctx.beginPath(); ctx.arc(W / 2, H / 2, 3, 0, 6.283); ctx.stroke();
+  for (let i = 0; i < 4; i++) { const a = i * 1.571 + t; line(W / 2 + Math.cos(a) * 30, H / 2 + Math.sin(a) * 30, W / 2 + Math.cos(a) * 38, H / 2 + Math.sin(a) * 38, C, 1); }
+  camTarget(P, '#ffe060');
+  hudText('GUARD DOG · ' + (P.label || ''), 10, 26, C, 5); hudText('BAT ' + Math.max(12, 98 - ((t * 7) | 0)) + '%', W - 10, 26, C, 4, 'right');
+  hudText(P.e && P.e.dead ? '위협 제거' : '교전 중', 10, H - 10, P.e && P.e.dead ? '#ffe060' : C, 5);
+}
+/* ---------------- 헬포드 강하 (헬포드에 타고 떨어짐) → 땅 ---------------- */
+function drawPodCam(P) {
+  const t = P.t;
+  if (P.phase === 'fall') {
+    const k = clamp(t / 0.9, 0, 1), fl = 0.7 + Math.sin(t * 50) * 0.3;
+    for (let i = 0; i < 3; i++) { const g = ctx.createRadialGradient(W / 2, H / 2, H * (0.25 + i * 0.1), W / 2, H / 2, W * 0.6); g.addColorStop(0, 'rgba(255,120,30,0)'); g.addColorStop(1, 'rgba(255,' + (110 + i * 40) + ',30,' + (0.35 * fl * (1 - k * 0.3)) + ')'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }   // 대기권 마찰 불꽃
+    poly([[0, 0], [W, 0], [W, 14], [0, 14]], '#121419'); poly([[0, H], [W, H], [W, H - 14], [0, H - 14]], '#121419');
+    hudText('HELLPOD · 강하', 10, 24, '#ffe060', 5); hudText('ALT ' + Math.max(0, Math.round((P.alt || 0) * 30)) + 'm', W - 10, 24, '#ffe060', 5, 'right');
+    camTarget(P, '#ff3a2a'); if (((t * 8) | 0) % 2) hudText('충돌 예상', W / 2, H - 20, '#ff3a2a', 6, 'center');
+  } else { hudText(P.label || '', 10, 26, '#ffe060', 5); if (P.count != null && P.count > 0) hudText(String(P.count), W / 2, H / 2 - 30, '#ff3a2a', 12, 'center'); }
+}
+/* ---------------- 차량: 사수석 · 운전석 · 잠망경 ---------------- */
+function drawVehCam(P) {
+  const t = P.t, vk = P.vk, Y = '#ffd630', r = P.rc || 0;
+  if (vk === 'gun') {   // 고속 정찰 차량 사수: 양옆 방탄판 + 손잡이
+    poly([[0, 0], [62, 0], [52, H], [0, H]], '#1a1d22'); poly([[56, 0], [62, 0], [52, H], [46, H]], '#4a5260'); poly([[W, 0], [W - 62, 0], [W - 52, H], [W, H]], '#1a1d22'); poly([[W - 56, 0], [W - 62, 0], [W - 52, H], [W - 46, H]], '#4a5260');
+    rect(58, 40, 4, 40, Y); rect(W - 62, 40, 4, 40, Y);
+    poly([[W / 2 - 30, H + 4], [W / 2 + 30, H + 4], [W / 2 + 6, H * 0.72 + r * 4], [W / 2 - 6, H * 0.72 + r * 4]], '#20232a'); rect(W / 2 - 40, H - 22, 18, 14, '#2a2e36'); rect(W / 2 + 22, H - 22, 18, 14, '#2a2e36');
+    if (r > 0.3) glow(W / 2, H * 0.72, 16 * r, P.flame ? '#ff8a30' : '#ffc060', 1);
+  } else if (vk === 'drive') {   // 보급 차량 운전석: 앞유리 기둥 · 계기판 · 운전대
+    poly([[0, 0], [40, 0], [70, H * 0.62], [0, H * 0.7]], '#15171c'); poly([[W, 0], [W - 40, 0], [W - 70, H * 0.62], [W, H * 0.7]], '#15171c'); rect(0, 0, W, 10, '#15171c');
+    poly([[0, H * 0.7], [W, H * 0.7], [W, H], [0, H]], '#1d2026'); poly([[0, H * 0.7], [W, H * 0.7], [W, H * 0.72], [0, H * 0.72]], '#4a5260');
+    ctx.strokeStyle = '#2a2e36'; ctx.lineWidth = 7; ctx.beginPath(); ctx.arc(W * 0.32, H + 6, 46, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    hudText(Math.round(Math.min(140, Math.abs(P.spd || 0) * 6)) + ' km/h', W * 0.62, H * 0.84, '#7dffb4', 6, 'center'); if (P.crash) hudText('충돌!', W / 2, H / 2 - 20, '#ff3a2a', 10, 'center');
+  } else {   // 전차 잠망경: 검은 테두리 + 거리 눈금
+    const x0 = 34, y0 = 22, x1 = W - 34, y1 = H - 30;
+    rect(0, 0, W, y0, '#050608'); rect(0, y1, W, H - y1, '#050608'); rect(0, y0, x0, y1 - y0, '#050608'); rect(x1, y0, W - x1, y1 - y0, '#050608');
+    ctx.strokeStyle = '#3a404c'; ctx.lineWidth = 1; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    const G2 = '#ffb060'; line(W / 2, H / 2 + 4, W / 2 - 8, H / 2 + 14, G2, 1); line(W / 2, H / 2 + 4, W / 2 + 8, H / 2 + 14, G2, 1); line(W / 2 - 40, H / 2, W / 2 - 12, H / 2, G2, 1); line(W / 2 + 12, H / 2, W / 2 + 40, H / 2, G2, 1);
+    for (let i = 1; i <= 4; i++) { line(W / 2 - 3, H / 2 + 14 + i * 8, W / 2 + 3, H / 2 + 14 + i * 8, G2, 1); hudText(String(i * 2), W / 2 + 6, H / 2 + 16 + i * 8, G2, 3); }
+    camTarget(P, G2); hudText(P.label || '', x0 + 4, y0 + 10, G2, 5); hudText(P.loaded === false ? '장전 중' : '장전 완료', x1 - 4, y0 + 8, P.loaded === false ? '#ff6a2a' : '#7dffb4', 4, 'right');
+    if (r > 0.3) { ctx.globalAlpha = 0.5 * r; rect(x0, y0, x1 - x0, y1 - y0, '#fff4d0'); ctx.globalAlpha = 1; }
+  }
+  if (vk !== 'tank') camTarget(P, '#ffe060');
+}
 /* ---------------- 이글 급강하 3인칭 (조종석 진입 전) ---------------- */
 function drawEagleChase(P) {
   const t = P.t, G2 = '#7dffb4', k = clamp(t / 0.25, 0, 1);
@@ -2365,26 +2508,31 @@ function drawSpace(P, fac) {
       const mx = x + 503 / SPACE_META.ship.w * sw, my = y + 246 / SPACE_META.ship.h * sh, ex = mx + 70, ey = H + 10, fl = 0.75 + Math.sin(t * 60) * 0.25;
       ctx.globalAlpha = 0.35 * fl; line(mx, my, ex, ey, '#ff2424', 2); ctx.globalAlpha = fl; line(mx, my, ex, ey, '#ff8a8a', 0.6); ctx.globalAlpha = 1; glowLine(mx, my, ex, ey, '#ff2424', 0.8); glow(mx, my, 4, '#ff3a3a', 1);
     }
-    hudText('SES 자유의 날개', 14, H - 20, '#ffe060', 7); hudText(P.rail ? '궤도 지원 — 레일캐넌 표적 고정' : '궤도 지원 — 아틀라스 캐넌 장전', 14, H - 11, P.rail ? '#ff8a8a' : '#c8b880', 5);
+    hudText('SES 자유의 날개', 14, H - 20, '#ffe060', 7); hudText(P.rail ? '궤도 지원 — 레일캐넌 표적 고정' : '궤도 지원 — ' + (P.style ? P.style.lab : '아틀라스 캐넌') + ' 장전', 14, H - 11, P.rail ? '#ff8a8a' : '#c8b880', 5);
   } else {             // 근접: 아틀라스 캐넌 · 발사 (반동으로 밀림)
-    const f = t - P.fireAt, fire = f >= 0, k = fire ? clamp(1 - f / 0.3, 0, 1) : 0, im = fire && f < 0.7 ? SPACE.at1 : SPACE.at0, emi = fire && f < 0.7 ? SPACE.at1Em : SPACE.at0Em, M = SPACE_META.at;
+    const STY = P.style || { n: 1, gap: 0 }, fires = []; for (let i = 0; i < (STY.n || 1); i++) { const fi = t - (P.fireAt + i * (STY.gap || 0)); if (fi >= 0) fires.push(fi); }
+    const f = fires.length ? fires[fires.length - 1] : t - P.fireAt, fire = fires.length > 0, k = fire ? clamp(1 - f / (STY.small ? 0.12 : 0.3), 0, 1) * (STY.big ? 1.4 : STY.small ? 0.5 : 1) : 0, im = fire && f < 0.7 ? SPACE.at1 : SPACE.at0, emi = fire && f < 0.7 ? SPACE.at1Em : SPACE.at0Em, M = SPACE_META.at;
     const sw = W * (1.02 + t * 0.03), sh = sw * M.h / M.w, dx = (M.muzzle.x - M.muzzle2.x), dy = (M.muzzle.y - M.muzzle2.y), dl = Math.hypot(dx, dy), x = (W - sw) / 2 + dx / dl * k * 6, y = (H - sh) / 2 + dy / dl * k * 6;
     if (im.complete) { ctx.drawImage(im, x, y, sw, sh); glowImg(emi, x, y, sw, sh); }
     ctx.imageSmoothingEnabled = false;
     const mx = x + M.muzzle.x / M.w * sw, my = y + M.muzzle.y / M.h * sh, ux = -dx / dl, uy = -dy / dl;
-    const RC = P.rail, cA = RC ? '#9ad0ff' : '#ffc060', cB = RC ? '#c8e0ff' : '#ffe0a0', cC = RC ? '#bed2ff' : '#ffd080', cD = RC ? '#7ab8ff' : '#ffb060';
+    const RC = P.rail, PAL = { rail: ['#9ad0ff', '#c8e0ff', '#bed2ff', '#7ab8ff'], gas: ['#9aff6a', '#c8ffb0', '#b4e66e', '#78be3c'], ems: ['#7ab8ff', '#c8e0ff', '#9ad0ff', '#5a78ff'], smoke: ['#c8c4bc', '#e0dcd4', '#d0ccc4', '#a6a096'], napalm: ['#ff6a2a', '#ffb080', '#ff8a40', '#e23e1c'], laser: ['#ff5020', '#ffb080', '#ff8a40', '#e23e1c'] }[RC ? 'rail' : STY.col] || ['#ffc060', '#ffe0a0', '#ffd080', '#ffb060'];
+    const cA = PAL[0], cB = PAL[1], cC = PAL[2], cD = PAL[3];
     if (RC && !fire) { const L = 400, fl = 0.75 + Math.sin(t * 60) * 0.25; ctx.globalAlpha = 0.4 * fl; line(mx, my, mx + ux * L, my + uy * L, '#ff2424', 2.4); ctx.globalAlpha = fl; line(mx, my, mx + ux * L, my + uy * L, '#ff9a9a', 0.7); ctx.globalAlpha = 1; glowLine(mx, my, mx + ux * L, my + uy * L, '#ff2424', 0.9); }
     if (RC && f > -0.25 && f < 0.35) for (let i = 0; i < 4; i++) {   // 충전 · 발사 순간 전기 불꽃
       let px = mx, py = my; ctx.strokeStyle = i % 2 ? '#ffffff' : '#9ad0ff'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(px, py);
       for (let j = 0; j < 5; j++) { px += (hash2(i, j, (t * 30) | 0) - 0.5) * 16; py += (hash2(j, i, (t * 30) | 0) - 0.5) * 16; ctx.lineTo(px, py); } ctx.stroke(); }
-    if (fire) {
-      if (f < 0.5) { glow(mx, my, 70 * (1 - f * 1.6), '#ffffff', 1); glow(mx, my, 130 * (1 - f), cA, 0.9); light(mx, my, 320, cB, 1.4 * (1 - f * 2)); }
-      for (let i = 0; i < 3; i++) { const r = f * 240 + i * 16; ctx.globalAlpha = clamp(0.55 - f, 0, 0.55); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(mx, my, r, r * 0.5, Math.atan2(uy, ux) + 1.57, 0, 6.283); ctx.stroke(); }
+    if (fire && STY.beam) {   // 궤도 레이저: 포구에서 끊기지 않는 빔
+      const L = 700, fl = 0.8 + Math.sin(t * 70) * 0.2, w0 = 5 * fl * clamp(f / 0.15, 0, 1); line(mx, my, mx + ux * L, my + uy * L, cA, w0 * 2.2); line(mx, my, mx + ux * L, my + uy * L, '#fff4d0', w0); glowLine(mx, my, mx + ux * L, my + uy * L, cA, 1.2); glow(mx, my, 30 * fl, '#ffffff', 1); light(mx, my, 260, cB, 1.2);
+    } else if (fire) for (const f1 of fires) {   // 포탄마다 섬광 · 충격파 고리 · 포탄 줄
+      const sm = STY.small ? 0.45 : STY.big ? 1.3 : 1;
+      if (f1 < 0.5) { glow(mx, my, 24 * sm * clamp(1 - f1 * 2.5, 0, 1), '#ffffff', 1); glow(mx, my, 52 * sm * clamp(1 - f1 * 1.6, 0, 1), cA, 0.75); light(mx, my, 260 * sm, cB, 1.1 * (1 - f1 * 2)); }
+      for (let i = 0; i < (STY.small ? 1 : 3); i++) { const r = f1 * 240 * sm + i * 16; ctx.globalAlpha = clamp(0.55 - f1, 0, 0.55); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(mx, my, r, r * 0.5, Math.atan2(uy, ux) + 1.57, 0, 6.283); ctx.stroke(); }
       ctx.globalAlpha = 1;
-      const d2 = f * (RC ? 900 : 560), sx = mx + ux * d2, sy = my + uy * d2; line(mx + ux * d2 * (RC ? 0.05 : 0.55), my + uy * d2 * (RC ? 0.05 : 0.55), sx, sy, '#ffffff', RC ? 4 : 3); glowLine(mx, my, sx, sy, cC, 1); glow(sx, sy, 12, '#ffffff', 1);
-      for (let i = 0; i < 6; i++) { const a = Math.atan2(uy, ux) + (hash2(i, 3, 1) - 0.5) * 1.4, r = f * (80 + i * 20); glow(mx + Math.cos(a) * r, my + Math.sin(a) * r, 4, cD, clamp(0.8 - f, 0, 0.8)); }
+      const d2 = f1 * (RC ? 900 : 560), sx = mx + ux * d2, sy = my + uy * d2; if (d2 < 900) { line(mx + ux * d2 * (RC ? 0.05 : 0.55), my + uy * d2 * (RC ? 0.05 : 0.55), sx, sy, '#ffffff', RC ? 4 : STY.small ? 2 : 3); glowLine(mx, my, sx, sy, cC, 1); glow(sx, sy, 12 * sm, '#ffffff', 1); }
+      if (!STY.small) for (let i = 0; i < 6; i++) { const a = Math.atan2(uy, ux) + (hash2(i, 3, 1) - 0.5) * 1.4, r = f1 * (80 + i * 20); glow(mx + Math.cos(a) * r, my + Math.sin(a) * r, 4, cD, clamp(0.8 - f1, 0, 0.8)); }
     } else { glow(mx, my, 5 + Math.sin(t * 30) * 2, '#ff8a30', 0.8); if (((t * 6) | 0) % 2) hudText('발사 준비', W - 14, H - 12, '#ffe060', 6, 'right'); }
-    hudText(RC ? '레일캐넌' : '아틀라스 캐넌', 14, 20, RC ? '#bed2ff' : '#ffe060', 6);
+    hudText(RC ? '레일캐넌' : STY.lab || '아틀라스 캐넌', 14, 20, RC ? '#bed2ff' : cA, 6); if (fire && (STY.n || 1) > 1) hudText('발사 ' + Math.min(STY.n, fires.length) + '/' + STY.n, W - 14, H - 12, cA, 5, 'right');
   }
   ctx.imageSmoothingEnabled = false;
 }
@@ -2399,6 +2547,10 @@ function povOverlay() {
   if (POV.kind === 'exo') drawExoCockpit(POV);
   else if (POV.kind === 'eagle') { if (POV.phase === 'chase') drawEagleChase(POV); else if (POV.win) drawEagleWindow(POV); else drawEagleHud(POV); }
   else if (POV.kind === 'aim') drawAimHud(POV);
+  else if (POV.kind === 'sentry') drawSentryCam(POV);
+  else if (POV.kind === 'drone') drawDroneCam(POV);
+  else if (POV.kind === 'pod') drawPodCam(POV);
+  else if (POV.kind === 'veh') drawVehCam(POV);
   else if (POV.kind === 'orbit' && POV.ground) { hudText('착탄', W / 2, 22, POV.rail ? '#bed2ff' : '#ffe060', 7, 'center'); }
 }
 
@@ -2455,12 +2607,29 @@ function aimKill(A, u, how = 'fling') {
   if (A.units.every(q => q.dead)) { killTarget(e, how, e.heavy || e.struct ? 3 : 2); A.done = true; A.doneT = A.t; slowmo(0.55, 0.3); return; }
   if (u.m) { u.m.alive = false; goreAt(p.x, 0.4, p.z, e.def.gore, 16); launchCorpse(e.def, p.x, 0, p.z, 1.0); if (how === 'burn') flames3(p.x, p.z, 0.3, 0.4); impact(1, p); }
 }
-function aimHurt(A, u, d, how) {
+function vib(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (er) {} }
+// 맞은 몹: 눌리고 꺾이는 경직, 깎인 체력만큼 붉게 / fb(1 탁 · 2 쾅 · 3 콰직)가 있으면 화면·타이머까지 멈칫
+function aimHurt(A, u, d, how, fb = 0) {
   if (!u || u.dead || d <= 0 || A.e.dead) return; u.hp -= d; u.hit = 0.12;
-  if (u.m) u.m.flinch = 0.25; else { A.e.flash = 0.05; A.e.flinch = 0.25; }
-  if (u.hp <= 0) aimKill(A, u, how);
+  const tg = u.m || A.e; if (fb) { tg.hs = 1; tg.hsDir = Math.random() < 0.5 ? -1 : 1; tg.hsJ = rand(-1, 1); } else tg.hs = Math.max(tg.hs || 0, 0.55);
+  if (u.max > 1) tg.dmgK = 1 - clamp(u.hp / u.max, 0, 1);
+  if (u.m) u.m.flinch = 0.25; else { if (fb) A.e.flash = 0.05; A.e.flinch = 0.25; }
+  const killed = u.hp <= 0;
+  if (fb) aimFeedback(A, u, fb, killed);
+  if (killed) aimKill(A, u, how);
 }
-function aimSplash(A, x, z, d, rad, how, skip) { if (d <= 0 || rad <= 0) return; for (const u of A.units) if (!u.dead && u !== skip) { const p = u.pos(); if (Math.hypot(p.x - x, (p.z - z) * 0.8) < rad) aimHurt(A, u, d, how); } }
+function aimFeedback(A, u, lv, killed) {
+  const p = u.pos(), q = proj(p.x, p.y, p.z);
+  A.marks.push({ x: q.x, y: q.y, t: 0, kill: killed, lv }); A.pops.push({ x: q.x + rand(-12, 12), y: q.y - 16, t: 0, txt: killed ? '처치!' : lv >= 3 ? '콰직!' : lv === 2 ? '쾅!' : '탁!', kill: killed, lv });
+  if (A.marks.length > 10) A.marks.shift(); if (A.pops.length > 8) A.pops.shift();
+  stopFor(killed ? 0.17 : lv >= 3 ? 0.13 : lv === 2 ? 0.085 : clamp(A.S.r * 0.55, 0.02, 0.045), true);   // 역경직: 화면·타이머 함께 멈칫
+  A.punch = Math.min(1.6, A.punch + (killed ? 1.2 : lv * 0.4)); A.ringHit = 1;
+  addShake(killed ? 0.45 : 0.05 + 0.08 * lv, rand(-2, 2), 2);
+  osc({ f: 2400, f2: 800, d: 0.04, v: 0.12, type: 'square' }); nz({ type: 'highpass', f: 2800, d: 0.04, v: 0.1 + lv * 0.03 });   // 탁
+  if (lv >= 2 || killed) osc({ f: 140, f2: 45, d: 0.18, v: killed ? 0.35 : 0.22 });
+  vib(killed ? 70 : lv >= 3 ? 45 : lv === 2 ? 28 : 14);
+}
+function aimSplash(A, x, z, d, rad, how, skip, fb = 0) { if (d <= 0 || rad <= 0) return; for (const u of A.units) if (!u.dead && u !== skip) { const p = u.pos(); if (Math.hypot(p.x - x, (p.z - z) * 0.8) < rad) aimHurt(A, u, d, how, fb); } }
 
 // 화면 점 → 세계 좌표 (손에 든 무기 총구에서 탄이 나가게)
 function unproj(sx, sy, d) {
@@ -2484,7 +2653,7 @@ function aimFx(key, e) {
   const S = aimSpec(key), w = S.w, fx = mkFx(), projs = []; fx.target = e; fx.end = 99; fx.projs = projs; fx.beams = [];
   const pod = { x: LX + 0.95, z: LZ + 0.55 }, gore = e.def.gore; let podY = 30;
   const A = { kind: 'aim', fx, e, S, key, units: aimUnits(e), t: 0, dt: 0, live: false, cur: 0, yaw: 0, pitch: 0, kick: 0, held: false, edge: false, charge: 0, cd: 0, acc: 0, timer: 0,
-    done: false, fail: false, hideLouis: true, ground: true, name: (STRATS.find(s => s.k === key) || {}).n || '', tick: 0, snd: 0 };
+    done: false, fail: false, hideLouis: true, ground: true, marks: [], pops: [], ripples: [], punch: 0, ringHit: 0, hfb: 0, name: (STRATS.find(s => s.k === key) || {}).n || '', tick: 0, snd: 0 };
   A.T = clamp(4 + 0.6 * (A.units.length - 1) + (e.heavy ? 1 : 0), 4, 9);
   // 헬포드 낙하 → 쾅 → 무기 꺼냄 → 헬포드는 땅속으로
   sfx.podFall(0.3);
@@ -2499,41 +2668,42 @@ function aimFx(key, e) {
   });
   const fire = () => {
     const u = A.units[A.cur]; if (!u || u.dead) return;
-    const tp = u.pos(), ms = aimMuzzleScr(A), m = unproj(ms.x, ms.y, 1.0), c = S.c; A.kick = 1;
+    const tp = u.pos(), ms = aimMuzzleScr(A), m = unproj(ms.x, ms.y, 1.0), c = S.c; A.kick = 1; vib(10);
+    if (S.m !== 'auto') stopFor(0.045, true);   // 쏘는 쪽 반동 경직
     const jit = (k = 0.12) => ({ x: tp.x + rand(-k, k), y: tp.y + rand(-k, k), z: tp.z });
     const shell = (kind, dur, arc, onHit, extra = {}) => projs.push(mkProj(Object.assign({ kind, x0: m.x, y0: m.y, z0: m.z, x1: tp.x, y1: tp.y, z1: tp.z, dur, arc, onHit }, extra)));
-    if (c === 'gun') { GUN[w.snd](); tracer3(m, jit(), w.tr, w.big ? 0.09 : 0.07); sparks3(tp.x, tp.y, tp.z - 0.2, w.big ? 6 : 3, gore, 4); aimHurt(A, u, S.d, 'fling'); addShake(w.big ? 0.06 : 0.03, -1, 0); }
-    else if (c === 'snipe') { GUN[w.snd](); fx.beams.push({ k: 'snipe', t: 0, d: 0.08, to: tp }); sparks3(tp.x, tp.y, tp.z - 0.2, 18, ['#ffffff', '#fff096', ...gore], 6); addShake(0.25, -3, 0); aimHurt(A, u, S.d, 'fling'); }
-    else if (c === 'cannon') { GUN.ac(); addShake(0.12, -1, 0); shell('shell', 0.1, 0, () => { boom3(tp.x, tp.z, 0.55, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling', u); }); }
+    if (c === 'gun') { GUN[w.snd](); tracer3(m, jit(), w.tr, w.big ? 0.09 : 0.07); sparks3(tp.x, tp.y, tp.z - 0.2, w.big ? 6 : 3, gore, 4); aimHurt(A, u, S.d, 'fling', 1); addShake(w.big ? 0.06 : 0.03, -1, 0); }
+    else if (c === 'snipe') { GUN[w.snd](); fx.beams.push({ k: 'snipe', t: 0, d: 0.08, to: tp }); sparks3(tp.x, tp.y, tp.z - 0.2, 18, ['#ffffff', '#fff096', ...gore], 6); addShake(0.25, -3, 0); aimHurt(A, u, S.d, 'fling', 2); }
+    else if (c === 'cannon') { GUN.ac(); addShake(0.12, -1, 0); shell('shell', 0.1, 0, () => { boom3(tp.x, tp.z, 0.55, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling', 2); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling', u); }); }
     else if (c === 'rocket') {
       GUN[w.snd](); addShake(w.back ? 0.3 : 0.15, -2, 0); P3({ x: m.x, y: m.y, z: m.z - 0.6, vx: rand(-0.5, 0.5), vy: 0.3, vz: -2, drag: 2, kind: 'smoke', max: 0.7, r: 0.3 });
-      if (key === 'w-wasp') { const al = A.units.filter(q => !q.dead); for (let i = 0; i < 5; i++) { const q = al[i % al.length], qp = q.pos(); projs.push(mkProj({ kind: 'mini', x0: m.x, y0: m.y, z0: m.z, x1: qp.x + rand(-0.2, 0.2), y1: qp.y, z1: qp.z, dur: rand(0.35, 0.5), arc: rand(0.5, 1.5), trail: 'smoke', at: i * 0.05, onHit: p => { boom3(p.x, p.z, 0.5, { y: Math.max(0, p.y - 0.4), quiet: true }); aimHurt(A, q, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', q); } })); } }
+      if (key === 'w-wasp') { const al = A.units.filter(q => !q.dead); for (let i = 0; i < 5; i++) { const q = al[i % al.length], qp = q.pos(); projs.push(mkProj({ kind: 'mini', x0: m.x, y0: m.y, z0: m.z, x1: qp.x + rand(-0.2, 0.2), y1: qp.y, z1: qp.z, dur: rand(0.35, 0.5), arc: rand(0.5, 1.5), trail: 'smoke', at: i * 0.05, onHit: p => { boom3(p.x, p.z, 0.5, { y: Math.max(0, p.y - 0.4), quiet: true }); aimHurt(A, q, S.d, 'fling', 2); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', q); } })); } }
       else shell(key === 'w-spear' ? 'missile' : 'rocket', key === 'w-spear' ? 0.55 : 0.28, key === 'w-spear' ? 2.5 : 0, p => {
         if (key === 'w-airburst') { boom3(p.x, p.z, 0.7, { y: p.y, noSmoke: true, quiet: true }); GUN.flakPop(); for (let j = 0; j < 20; j++) P3({ x: p.x, y: p.y, z: p.z, vx: rand(-3, 3), vy: rand(-9, -4), vz: rand(-1.5, 1.5), kind: 'tracer', max: 0.3, col: '#ffd630' }); }
         else { boom3(p.x, p.z, w.size || 1.2, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); if (w.napalm) flames3(p.x, p.z, 1.0, 1.3); }
-        aimHurt(A, u, S.d, w.napalm ? 'burn' : 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, w.napalm ? 'burn' : 'fling', u); addShake(0.3, 0, 3);
+        aimHurt(A, u, S.d, w.napalm ? 'burn' : 'fling', 3); aimSplash(A, p.x, p.z, S.sp, S.rad, w.napalm ? 'burn' : 'fling', u, 1); addShake(0.3, 0, 3);
       }, { trail: 'smoke' });
     }
-    else if (c === 'silo') { GUN.siloAlarm(); A.cd = 99; fx.at(fx.t + 0.5, () => { GUN.silo(); projs.push(mkProj({ kind: 'missile', path: 'silo', x0: pod.x, y0: 1.5, z0: pod.z, x1: tp.x, y1: 0.3, z1: tp.z, dur: 1.0, trail: 'fire', onHit: () => { boom3(tp.x, tp.z, 3.2); flash(0.6); aimSplash(A, tp.x, tp.z, 99, 6, 'fling'); for (const q of A.units) aimHurt(A, q, 99, 'fling'); } })); }); }
-    else if (c === 'grenade') { GUN[w.snd](); shell('grenade', 0.36, 1.0, p => { if (w.stun) { GUN.stun(); boom3(p.x, p.z, 0.4, { noSmoke: true, quiet: true }); sparks3(p.x, 0.4, p.z, 20, ['#5a78ff', '#bed2ff', '#ffffff'], 5); } else boom3(p.x, p.z, w.size || 0.7, { quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u); }); }
-    else if (c === 'quasar') { GUN.quasar(); addShake(0.2, -2, 0); shell('bolt', 0.1, 0, p => { boom3(p.x, p.z, 1.3, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u); }); }
-    else if (c === 'plasma') { GUN.epoch(); addShake(0.25, -2, 0); shell('plasma', 0.24, 0, p => { boom3(p.x, p.z, 1.5, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'silo') { GUN.siloAlarm(); A.cd = 99; fx.at(fx.t + 0.5, () => { GUN.silo(); projs.push(mkProj({ kind: 'missile', path: 'silo', x0: pod.x, y0: 1.5, z0: pod.z, x1: tp.x, y1: 0.3, z1: tp.z, dur: 1.0, trail: 'fire', onHit: () => { boom3(tp.x, tp.z, 3.2); flash(0.6); aimSplash(A, tp.x, tp.z, 99, 6, 'fling'); for (const q of A.units) aimHurt(A, q, 99, 'fling', 3); } })); }); }
+    else if (c === 'grenade') { GUN[w.snd](); shell('grenade', 0.36, 1.0, p => { if (w.stun) { GUN.stun(); boom3(p.x, p.z, 0.4, { noSmoke: true, quiet: true }); sparks3(p.x, 0.4, p.z, 20, ['#5a78ff', '#bed2ff', '#ffffff'], 5); } else boom3(p.x, p.z, w.size || 0.7, { quiet: true }); aimHurt(A, u, S.d, 'fling', 2); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u, 1); }); }
+    else if (c === 'quasar') { GUN.quasar(); addShake(0.2, -2, 0); shell('bolt', 0.1, 0, p => { boom3(p.x, p.z, 1.3, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling', 3); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u, 1); }); }
+    else if (c === 'plasma') { GUN.epoch(); addShake(0.25, -2, 0); shell('plasma', 0.24, 0, p => { boom3(p.x, p.z, 1.5, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling', 3); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u, 1); }); }
     else if (c === 'rail') {   // 관통: 조준선 뒤로 겹친 몹까지
       GUN.rail(); flash(0.4, '#bed2ff'); addShake(0.35, -4, 0); fx.beams.push({ k: 'rail', t: 0, d: 0.14, to: tp }); sparks3(tp.x, tp.y, tp.z - 0.2, 24, ['#ffffff', '#bed2ff', ...gore], 7);
       const E = { x: VCAM.x, z: VCAM.z }, dx = tp.x - E.x, dz = tp.z - E.z, L = Math.hypot(dx, dz) || 1;
-      for (const q of A.units) if (!q.dead) { const p = q.pos(), rx = p.x - E.x, rz = p.z - E.z, along = (rx * dx + rz * dz) / L, side = Math.abs(rx * dz - rz * dx) / L; if (q === u || (along > L - 0.5 && side < 0.6)) aimHurt(A, q, S.d, 'fling'); }
+      for (const q of A.units) if (!q.dead) { const p = q.pos(), rx = p.x - E.x, rz = p.z - E.z, along = (rx * dx + rz * dz) / L, side = Math.abs(rx * dz - rz * dx) / L; if (q === u || (along > L - 0.5 && side < 0.6)) aimHurt(A, q, S.d, 'fling', 3); }
     }
-    else if (c === 'nova') { GUN.nova(); fx.beams.push({ k: 'nova', t: 0, d: 0.07, to: tp }); sparks3(tp.x, tp.y, tp.z, 8, ['#ff8c1e', '#fff096']); aimHurt(A, u, S.d, 'burn'); }
-    else if (c === 'melta') { GUN.melta(); fx.beams.push({ k: 'melta', t: 0, d: 0.22, to: tp }); for (let i = 0; i < 6; i++) P3({ x: tp.x + rand(-0.3, 0.3), y: tp.y + rand(-0.3, 0.3), z: tp.z - 0.2, vx: rand(-1, 1), vy: rand(1, 3), kind: 'fire', max: 0.35, r: rand(0.08, 0.18) }); aimHurt(A, u, S.d, 'burn'); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'burn', u); }
+    else if (c === 'nova') { GUN.nova(); fx.beams.push({ k: 'nova', t: 0, d: 0.07, to: tp }); sparks3(tp.x, tp.y, tp.z, 8, ['#ff8c1e', '#fff096']); aimHurt(A, u, S.d, 'burn', 1); }
+    else if (c === 'melta') { GUN.melta(); fx.beams.push({ k: 'melta', t: 0, d: 0.22, to: tp }); for (let i = 0; i < 6; i++) P3({ x: tp.x + rand(-0.3, 0.3), y: tp.y + rand(-0.3, 0.3), z: tp.z - 0.2, vx: rand(-1, 1), vy: rand(1, 3), kind: 'fire', max: 0.35, r: rand(0.08, 0.18) }); aimHurt(A, u, S.d, 'burn', 2); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'burn', u); }
     else if (c === 'arc') {   // 연쇄: 가까운 몹 셋까지 튐
-      GUN.arc(); fx.beams.push({ k: 'arc', t: 0, d: 0.18, to: tp }); sparks3(tp.x, tp.y, tp.z, 16, ['#bed2ff', '#ffffff', '#5a78ff'], 6); aimHurt(A, u, S.d, 'fling');
+      GUN.arc(); fx.beams.push({ k: 'arc', t: 0, d: 0.18, to: tp }); sparks3(tp.x, tp.y, tp.z, 16, ['#bed2ff', '#ffffff', '#5a78ff'], 6); aimHurt(A, u, S.d, 'fling', 2);
       let from = tp; const near = A.units.filter(q => !q.dead && q !== u).map(q => [q, q.pos()]).sort((a, b) => Math.hypot(a[1].x - tp.x, a[1].z - tp.z) - Math.hypot(b[1].x - tp.x, b[1].z - tp.z)).slice(0, 3);
-      for (const [q, p] of near) if (Math.hypot(p.x - tp.x, p.z - tp.z) < 3) { fx.beams.push({ k: 'arc2', t: 0, d: 0.18, from, to: p }); aimHurt(A, q, S.d * 0.7, 'fling'); from = p; }
+      for (const [q, p] of near) if (Math.hypot(p.x - tp.x, p.z - tp.z) < 3) { fx.beams.push({ k: 'arc2', t: 0, d: 0.18, from, to: p }); aimHurt(A, q, S.d * 0.7, 'fling', 1); from = p; }
     }
-    else if (c === 'harpoon') { GUN.speargun(); shell('harpoon', 0.14, 0, () => { sparks3(tp.x, tp.y, tp.z, 12, gore); aimHurt(A, u, S.d, 'fling'); fx.at(fx.t + 0.18, () => { boom3(tp.x, tp.z, 0.6, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling'); }); }); }
-    else if (c === 'throw') { GUN.flag(); A.thrown = A.t; shell('flag', 0.35, 1.6, q => { fx.flag = { x: q.x, z: q.z }; sparks3(q.x, 0.5, q.z, 14, gore); aimHurt(A, u, S.d, 'fling'); aimSplash(A, q.x, q.z, S.sp, S.rad, 'fling', u); }); }
-    else if (c === 'melee') { GUN.hammer(); A.swing = A.t; addShake(0.4, 5, 0); fx.at(fx.t + 0.12, () => { for (let j = 0; j < 3; j++) decals.push({ kind: 'ring', x: tp.x, z: tp.z, r: 0.3, grow: 6 + j * 3, life: -j * 0.06, max: 0.45 }); sparks3(tp.x, tp.y, tp.z, 22, ['#ffffff', '#ffd630', '#c4ccd6'], 7); dust3(tp.x, tp.z, 14, 1.2); aimHurt(A, u, S.d, 'fling'); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling', u); }); }
-    else if (c === 'saw') { GUN.defol(); shell('mini', 0.12, 0, () => { sparks3(tp.x, tp.y, tp.z - 0.2, 4, gore, 4); aimHurt(A, u, S.d, 'fling'); }); }
+    else if (c === 'harpoon') { GUN.speargun(); shell('harpoon', 0.14, 0, () => { sparks3(tp.x, tp.y, tp.z, 12, gore); aimHurt(A, u, S.d, 'fling', 2); fx.at(fx.t + 0.18, () => { boom3(tp.x, tp.z, 0.6, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling'); }); }); }
+    else if (c === 'throw') { GUN.flag(); A.thrown = A.t; shell('flag', 0.35, 1.6, q => { fx.flag = { x: q.x, z: q.z }; sparks3(q.x, 0.5, q.z, 14, gore); aimHurt(A, u, S.d, 'fling', 3); aimSplash(A, q.x, q.z, S.sp, S.rad, 'fling', u, 1); }); }
+    else if (c === 'melee') { GUN.hammer(); A.swing = A.t; addShake(0.4, 5, 0); fx.at(fx.t + 0.12, () => { for (let j = 0; j < 3; j++) decals.push({ kind: 'ring', x: tp.x, z: tp.z, r: 0.3, grow: 6 + j * 3, life: -j * 0.06, max: 0.45 }); sparks3(tp.x, tp.y, tp.z, 22, ['#ffffff', '#ffd630', '#c4ccd6'], 7); dust3(tp.x, tp.z, 14, 1.2); aimHurt(A, u, S.d, 'fling', 3); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling', u, 1); }); }
+    else if (c === 'saw') { GUN.defol(); shell('mini', 0.12, 0, () => { sparks3(tp.x, tp.y, tp.z - 0.2, 4, gore, 4); aimHurt(A, u, S.d, 'fling', 1); }); }
   };
   const holdFx = dt => {   // 레이저 · 화염 · 독가스: 누르는 동안 계속
     const u = A.units[A.cur]; if (!u || u.dead) return; const tp = u.pos(), ms = aimMuzzleScr(A), m = unproj(ms.x, ms.y, 1.0), c = S.c;
@@ -2544,7 +2714,8 @@ function aimFx(key, e) {
       if (c === 'gas') P3({ x: m0.x, y: m0.y, z: m0.z, vx: (ex - m0.x) / dur, vy: (ey - m0.y) / dur, vz: (ezz - m0.z) / dur, kind: 'cloud', max: dur + 0.25, r: rand(0.08, 0.2), col: pick(['#78be3c', '#b4e66e']) });
       else P3({ x: m0.x, y: m0.y, z: m0.z, vx: (ex - m0.x) / dur, vy: (ey - m0.y) / dur, vz: (ezz - m0.z) / dur, kind: 'fire', max: dur + 0.1, r: rand(0.08, w.big ? 0.28 : 0.2) }); }
     const how = c === 'gas' ? 'melt' : c === 'beam' ? 'burn' : 'burn';
-    aimHurt(A, u, S.d * dt, how); aimSplash(A, tp.x, tp.z, S.d * S.sp * dt, S.rad, how, u); A.kick = Math.max(A.kick, 0.25);
+    A.hfb -= dt; const fbNow = A.hfb <= 0; if (fbNow) A.hfb = 0.12;
+    aimHurt(A, u, S.d * dt, how, fbNow ? 1 : 0); aimSplash(A, tp.x, tp.z, S.d * S.sp * dt, S.rad, how, u); A.kick = Math.max(A.kick, 0.25);
   };
   const failNow = () => {   // 시간 초과: 시간 정지가 풀리고 몹이 다시 다가옴, 같은 코드를 다시
     A.fail = true; A.failT = A.t; sfx.bad(); flash(0.35, '#ff3030'); addShake(0.3, 0, 3);
@@ -2561,7 +2732,8 @@ function aimFx(key, e) {
     for (const p of projs) stepProj(p, dt);
     for (const b of fx.beams) b.t += dt; for (let i = fx.beams.length - 1; i >= 0; i--) if (fx.beams[i].t > fx.beams[i].d + 0.05) fx.beams.splice(i, 1);
     for (const u of A.units) if (u.hit > 0) u.hit -= dt;
-    A.kick = Math.max(0, A.kick - dt * 8); A.dt = dt;
+    A.kick = Math.max(0, A.kick - dt * 8); A.dt = dt; A.punch = Math.max(0, A.punch - dt * 6); A.ringHit = Math.max(0, A.ringHit - dt * 6);
+    for (const L of [A.marks, A.pops, A.ripples]) { for (const o of L) o.t += dt; while (L.length && L[0].t > 0.7) L.shift(); }
     if (POV !== A) return;
     A.live = A.t > 0.32 && !A.done && !A.fail;
     if (A.done) { if (A.t > A.doneT + 0.7 && !A.left) { A.left = true; const bonus = Math.round(Math.max(0, A.T - A.timer) * 10); G.score += bonus; A.bonus = bonus; lastHud = ''; hud(); flash(0.35, '#ffffff'); exitPOV(); AIM = null; fx.end = fx.t + 0.5; fx.at(fx.t + 0.4, () => { G.armed = null; }); } return; }
@@ -2615,7 +2787,7 @@ function aimCam(P) {
   const k = P.t < 0.02 ? 1 : 1 - Math.exp(-(P.dt || 0.016) * 10); P.yaw = lerp(P.yaw, yawT, k); P.pitch = lerp(P.pitch || pitchT, pitchT, k);
   const dol = clamp(P.t / 0.32, 0, 1), ds = dol * dol * (3 - 2 * dol), back = (1 - ds) * 1.5, up = (1 - ds) * 0.4;
   const fT = FOCAL * clamp(dist / 3.6, 1.5, 3.6), sx = Math.sin(P.yaw), cz = Math.cos(P.yaw);
-  setVC({ on: true, x: E.x - sx * back, y: E.y + up, z: E.z - cz * back, yaw: P.yaw + Math.sin(P.t * 1.3) * 0.004, pitch: P.pitch + Math.cos(P.t * 1.1) * 0.003 - P.kick * 0.012, cy: H * 0.5, f: lerp(FOCAL, fT, ds) });
+  setVC({ on: true, x: E.x - sx * back, y: E.y + up, z: E.z - cz * back, yaw: P.yaw + Math.sin(P.t * 1.3) * 0.004, pitch: P.pitch + Math.cos(P.t * 1.1) * 0.003 - P.kick * 0.012, cy: H * 0.5, f: lerp(FOCAL, fT, ds) * (1 + 0.06 * (P.punch || 0)) });
 }
 
 // 손에 든 무기 (화면 오른쪽 아래, 반동·숨 흔들림) — 총구에서 손잡이 쪽으로 원근감 있게 굵어짐
@@ -2680,31 +2852,49 @@ function drawAimHud(A) {
   hudText('◷ 시간 정지', 10, 16, '#9ad8ff', 5); hudText('남은 적 ' + A.units.filter(u => !u.dead).length, 10, 23, '#c8d8e8', 4);
   hudText(A.name, 10, H - 18, '#ffe060', 5); hudText(S.hint + ' · 클릭·터치·스페이스', 10, H - 11, '#c8d8e8', 4);
   // 다른 몹: 옅은 표시
-  for (const u of A.units) if (!u.dead && u !== A.units[A.cur]) { const b = aimBox(u); if (b) bracket(b.x, b.cy, (b.x1 - b.x0) * 1.2, b.h * 1.1, 'rgba(255,224,96,0.35)', 3); }
+  for (const u of A.units) if (!u.dead && u !== A.units[A.cur]) { const b = aimBox(u); if (b) { bracket(b.x, b.cy, (b.x1 - b.x0) * 1.2, b.h * 1.1, 'rgba(255,224,96,0.35)', 3); aimPips(A, u, b, false); } }
   const u = A.units[A.cur], b = u && !u.dead ? aimBox(u) : null;
   if (b && !A.fail && !A.done) {
     const pul = 0.6 + Math.sin(t * 10) * 0.4, R = clamp(b.h * 0.62, 14, 70), col = fr > 0.5 ? '#7dffb4' : fr > 0.25 ? '#ffe060' : '#ff3a2a';
     bracket(b.x, b.cy, (b.x1 - b.x0) * 1.25, b.h * 1.15, '#ffe060', 5);   // 하이라이트
     ctx.globalAlpha = 0.25 * pul; circ(b.x, b.cy, R + 3, '#ffe060'); ctx.globalAlpha = 1;
-    ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(b.x, b.cy, R, 0, Math.PI * 2); ctx.stroke();   // 원형 타이머
-    ctx.strokeStyle = col; ctx.lineWidth = fr < 0.25 && ((t * 8) | 0) % 2 ? 3 : 2; ctx.beginPath(); ctx.arc(b.x, b.cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fr); ctx.stroke();
+    const stopNow = hitstop > 0, jx = stopNow ? rand(-1.5, 1.5) : 0, jy = stopNow ? rand(-1.5, 1.5) : 0; b.x += jx; b.cy += jy;
+    ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(b.x, b.cy, R, 0, Math.PI * 2); ctx.stroke();   // 원형 타이머 (경직 중엔 하얗게 멈춤)
+    ctx.strokeStyle = stopNow || A.ringHit > 0.5 ? '#ffffff' : col; ctx.lineWidth = fr < 0.25 && ((t * 8) | 0) % 2 ? 3 : 2; ctx.beginPath(); ctx.arc(b.x, b.cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fr); ctx.stroke();
     glow(b.x, b.cy - R, 3, col, 0.8);
     if (S.m === 'charge' && A.charge > 0) { ctx.strokeStyle = '#5ac4ff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(b.x, b.cy, R - 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(A.charge / S.ch, 0, 1)); ctx.stroke(); }
-    if (u.max > 1) { const hw = 22; rect(b.x - hw, b.y1 + 4, hw * 2, 2, '#2a0a0a'); rect(b.x - hw, b.y1 + 4, hw * 2 * clamp(u.hp / u.max, 0, 1), 2, '#ff3a2a'); }
+    aimPips(A, u, b, true);
     if (t < 1.6 && ((t * 4) | 0) % 2 === 0) hudText(AIM_AUTO ? 'AUTO' : '클릭!', b.x, b.y0 - 6, '#ffe060', 5, 'center');
     hudText(left.toFixed(1), b.x + R + 4, b.cy + 2, col, 5);
   }
   // 조준점
   line(W / 2 - 6, H / 2, W / 2 - 2, H / 2, '#ffffff', 1); line(W / 2 + 2, H / 2, W / 2 + 6, H / 2, '#ffffff', 1); line(W / 2, H / 2 - 6, W / 2, H / 2 - 2, '#ffffff', 1); line(W / 2, H / 2 + 2, W / 2, H / 2 + 6, '#ffffff', 1);
+  for (const r of A.ripples) { const k = r.t / 0.35; if (k > 1) continue; ctx.globalAlpha = 1 - k; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(r.x, r.y, 4 + k * 22, 0, 6.283); ctx.stroke(); ctx.globalAlpha = 1; }   // 누른 자리
+  for (const m of A.marks) { const k = m.t / 0.3; if (k > 1) continue; const s2 = (m.kill ? 9 : 5 + m.lv) * (1 + k * 0.8), c2 = m.kill ? '#ff3a2a' : '#ffffff'; ctx.globalAlpha = 1 - k;   // 명중 ✕
+    line(m.x - s2, m.y - s2, m.x - s2 * 0.35, m.y - s2 * 0.35, c2, 2); line(m.x + s2, m.y - s2, m.x + s2 * 0.35, m.y - s2 * 0.35, c2, 2); line(m.x - s2, m.y + s2, m.x - s2 * 0.35, m.y + s2 * 0.35, c2, 2); line(m.x + s2, m.y + s2, m.x + s2 * 0.35, m.y + s2 * 0.35, c2, 2);
+    if (m.kill) { ctx.strokeStyle = c2; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(m.x, m.y, s2 * 1.4, 0, 6.283); ctx.stroke(); } ctx.globalAlpha = 1; }
+  for (const o of A.pops) { const k = o.t / 0.6; if (k > 1) continue; ctx.globalAlpha = clamp(1.4 - k * 1.4, 0, 1); const sz = o.kill ? 10 : o.lv >= 3 ? 9 : o.lv === 2 ? 8 : 6, sc = k < 0.12 ? 1.5 - k * 4 : 1;   // 탁! 쾅! 콰직!
+    hudText(o.txt, o.x, o.y - k * 26, o.kill ? '#ff3a2a' : o.lv >= 2 ? '#ffe060' : '#ffffff', Math.round(sz * sc), 'center'); ctx.globalAlpha = 1; }
   if (A.fail) hudText('시간 초과', W / 2, H / 2 - 30, '#ff3a2a', 9, 'center');
   if (A.done) hudText('처치', W / 2, H / 2 - 30, '#ffe060', 9, 'center');
 }
 
+// 몇 번 더 쏴야 하는지: 한 칸 = 한 발 (누르고 있는 무기는 남은 초)
+function aimPips(A, u, b, big) {
+  const S = A.S;
+  if (S.m === 'hold') { const sec = u.hp / S.d; if (u.max / S.d < 0.3) return; if (big) { const hw = 24; rect(b.x - hw, b.y1 + 5, hw * 2, 3, '#2a0a0a'); rect(b.x - hw, b.y1 + 5, hw * 2 * clamp(u.hp / u.max, 0, 1), 3, '#ff6a2a'); hudText('꾸욱 ' + sec.toFixed(1) + '초', b.x, b.y1 + 15, '#ffb060', 5, 'center'); } return; }
+  const total = Math.max(1, Math.ceil(u.max / S.d - 1e-6)), left = Math.max(0, Math.ceil(u.hp / S.d - 1e-6)); if (total <= 1) return;
+  const pw = big ? 4 : 2, gap = big ? 1.5 : 1, per = Math.min(total, big ? 16 : 8), rows = Math.ceil(Math.min(total, big ? 32 : 8) / per), wAll = per * pw + (per - 1) * gap;
+  if (total > (big ? 32 : 8)) { const hw = big ? 24 : 10; rect(b.x - hw, b.y0 - 6, hw * 2, big ? 3 : 2, '#2a0a0a'); rect(b.x - hw, b.y0 - 6, hw * 2 * left / total, big ? 3 : 2, '#ffe060'); }
+  else for (let i = 0; i < total; i++) { const r = (i / per) | 0, c = i % per, x = b.x - wAll / 2 + c * (pw + gap), y = b.y0 - 6 - r * (pw + 2);
+    rect(x, y, pw, big ? 3 : 2, i < left ? '#ffe060' : 'rgba(255,255,255,0.18)'); }
+  if (big) hudText(left + '발', b.x - wAll / 2 - 4, b.y0 - 4, left <= 2 ? '#ff3a2a' : '#ffe060', 6, 'right');
+}
 // 입력: 클릭·터치(다른 몹을 누르면 그 몹으로 조준 이동) · 스페이스
 function aimDown(x, y) {
   const A = AIM; if (!A || POV !== A || A.done || A.fail) return;
   if (x != null) for (let i = 0; i < A.units.length; i++) { const u = A.units[i]; if (u.dead || i === A.cur) continue; const b = aimBox(u); if (b && x > b.x0 - 4 && x < b.x1 + 4 && y > b.y0 - 4 && y < b.y1 + 4) { A.cur = i; break; } }
-  A.held = true; A.edge = true;
+  A.held = true; A.edge = true; A.ripples.push({ x: x != null ? x : W / 2, y: y != null ? y : H / 2, t: 0 }); if (A.ripples.length > 6) A.ripples.shift(); vib(8);
 }
 function aimUp() { if (AIM) AIM.held = false; }
 window.addEventListener('pointerdown', ev => {
@@ -2844,7 +3034,8 @@ function update(dt) {
   for (const t of G.targets.concat(e ? [e] : [])) {
     if (t.flash > 0) t.flash -= dt; if (t.stun > 0) t.stun -= dt; if (t.flinch > 0) t.flinch = Math.max(0, t.flinch - dt * 2.5);
     if (t.kz > 0) t.kz = Math.max(0, t.kz - dt * (t.frozen ? 0.6 : 1.6)); t.kx *= Math.exp(-dt * 3);
-    if (t.members) for (const m of t.members) if (m.flinch > 0) m.flinch = Math.max(0, m.flinch - dt * 2.5);
+    if (t.hs > 0) t.hs = Math.max(0, t.hs - dt * 5);
+    if (t.members) for (const m of t.members) { if (m.flinch > 0) m.flinch = Math.max(0, m.flinch - dt * 2.5); if (m.hs > 0) m.hs = Math.max(0, m.hs - dt * 5); }
   }
   for (let i = G.fx.length - 1; i >= 0; i--) if (!runFx(G.fx[i], dt)) G.fx.splice(i, 1);
   for (let i = G.targets.length - 1; i >= 0; i--) if (G.targets[i].dead) G.targets.splice(i, 1);
