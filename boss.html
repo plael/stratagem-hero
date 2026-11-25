@@ -1385,6 +1385,7 @@ function startAct(a, d, extra) { PL.act = a; PL.at = 0; PL.ad = d; if (extra) Ob
 /* ---------------- 피해 · 사망 ---------------- */
 function hurtPlayer(dmg, from) {
   if (PL.dead) return;
+  dmg = packShield(dmg, from); if (dmg <= 0.5) return;
   PL.hp -= dmg; PL.hurtT = 0.5; PL.regen = 0; addShake(Math.min(0.6, dmg / 120)); flash(Math.min(0.5, dmg / 200), '#ff3a2a');
   osc({ f: 160, f2: 70, d: 0.2, v: 0.25, type: 'triangle' });
   if (from) { const dx = PL.x - from.x, dz = PL.z - from.z, d = Math.hypot(dx, dz) || 1, k = Math.min(9, dmg / 10); PL.vx += dx / d * k; PL.vz += dz / d * k; if (dmg > 40 && PL.stance !== 'prone') { PL.vy = 3; PL.onGround = false; startAct('dive', 0, { knock: true }); PL.stance = 'stand'; } }
@@ -1712,6 +1713,7 @@ function diverAnim() {
   const P = PL.wpn === 1 ? 'p_' : PL.wpn === 2 && WPN[2] ? (WPN[2].arch === 'tube' ? 't_' : 'h_') : '', hasP = s => DIVER[P + s] ? P + s : s, a = PL.act, firing = act('fire') && WPN[PL.wpn] && !busy();
   if (PL.dead) return ['prone', 0];
   if (a === 'dive') return ['dive', 0];
+  if (!PL.onGround && (PL.jumpT > 0 || PL.hoverT > 0)) return [hasP('sprint'), 1];
   if (a === 'climb') return ['climb', PL.at / PL.ad < 0.5 ? 0 : 1];
   if (a === 'melee') { const f = PL.at < 0.15 ? 0 : 1; return [PL.stance === 'prone' ? 'pronemelee' : PL.stance === 'crouch' ? 'crouchmelee' : PL.wpn === 1 ? 'p_melee' : 'melee', f]; }
   if (a === 'throw' || PL.nadeHold || PL.beaconHold) return ['throw', PL.nadeHold || PL.beaconHold || PL.at < 0.16 ? 0 : 1];
@@ -1973,7 +1975,7 @@ function updateJets(dt) {
 /* ---------------- 헬포드 (재보급 · 앞으로 지원무기 · 배낭 · 센트리 · 차량) ---------------- */
 const PODS = [];
 function hellpod(b, kind, k) {
-  const p = { x: b.x, z: b.z, y: 60, t: 0, kind, k, landed: false, uses: kind === 'weapon' ? 1 : 4 };
+  const p = { x: b.x, z: b.z, y: 60, t: 0, kind, k, landed: false, uses: kind === 'weapon' || kind === 'pack' ? 1 : 4 };
   PODS.push(p); osc({ f: 1600, f2: 300, d: 1.1, v: 0.07 });
 }
 function updatePods(dt) {
@@ -1984,7 +1986,7 @@ function updatePods(dt) {
   }
 }
 function usePod() {   // E: 가까운 포드 (재보급 · 무기 줍기)
-  for (const p of PODS) if (p.landed && p.kind === 'weapon' && p.uses > 0 && distP(p.x, p.z) < 2.2) { p.uses = 0; equipSupport(p.k); return true; }
+  for (const p of PODS) if (p.landed && (p.kind === 'weapon' || p.kind === 'pack') && p.uses > 0 && distP(p.x, p.z) < 2.2) { p.uses = 0; if (p.kind === 'pack') equipPack(p.k); else equipSupport(p.k); return true; }
   for (const p of PODS) if (p.landed && p.kind === 'supply' && p.uses > 0 && distP(p.x, p.z) < 2.2) {
     p.uses--; refillAll();
     toast('재보급 (' + p.uses + '개 남음)'); S.click(1200, 0.1); osc({ f: 660, f2: 990, d: 0.2, v: 0.1, type: 'triangle', at: 0.05 });
@@ -2002,7 +2004,7 @@ function updateStrat(dt) {
   for (let i = STREAKS.length - 1; i >= 0; i--) { STREAKS[i].t += dt; if (STREAKS[i].t > STREAKS[i].dur) STREAKS.splice(i, 1); }
   for (const R of RAILS) R.t += dt; for (let i = RAILS.length - 1; i >= 0; i--) if (RAILS[i].t > 1.15) RAILS.splice(i, 1);
   for (const d of DUMS) if (d.stun > 0) d.stun -= dt;
-  updateBeacons(dt); updateAreas(dt); updateLasers(dt); updateJets(dt); updatePods(dt); updateProj(dt);
+  updateBeacons(dt); updateAreas(dt); updateLasers(dt); updateJets(dt); updatePods(dt); updateProj(dt); packUpdate(dt); dogUpdate(dt); updateC4(dt);
 }
 /* ---------------- 그리기 ---------------- */
 function sprImg(fr, key) { return decodeFr(fr, key); }
@@ -2027,7 +2029,7 @@ function drawStratWorld(list) {
   for (const r of ROCKETS) list.push({ k: dist3(r.cx || r.x, r.cy || r.y, r.cz || r.z), draw: () => { const q = proj(r.cx, r.cy, r.cz); if (q.zc < 0.3) return; glow(q.x, q.y, 3, '#ffb060', 1); circ(q.x, q.y, 1, '#ffffff'); } });
   // 헬포드
   for (const p of PODS) list.push({ k: dist3(p.x, p.y + 1, p.z), draw: () => { const img = sprImg((p.landed ? SPR4.pod : SPR4.podF)[0], p.landed ? 'pod' : 'podF'), q = proj(p.x, p.y, p.z); if (q.zc < 0.4) return; const k = MPX * q.s * 1.0; ctx.drawImage(HD(img), q.x - img._ax * k, q.y - img._ay * k, img.width * k, img.height * k); if (p.landed && p.kind === 'supply' && p.uses > 0) { glow(q.x, q.y - 1.2 * q.s, 4, '#5ac4ff', 0.8); if (distP(p.x, p.z) < 2.2) hudText('[' + keyLabel(KB.use) + '] 재보급 ' + p.uses, q.x, q.y - 1.9 * q.s, '#5ac4ff', 5.5, 'center'); }
-    if (p.landed && p.kind === 'weapon' && p.uses > 0) { const s = SBY[p.k], ic = Math.max(8, Math.min(16, 0.5 * q.s)); drawIcon(s, q.x - ic / 2, q.y - 1.9 * q.s - ic, ic); glow(q.x, q.y - 1.2 * q.s, 4, '#4ab4ff', 0.6); if (distP(p.x, p.z) < 2.2) hudText('[' + keyLabel(KB.use) + '] ' + s.n + ' 줍기', q.x, q.y - 1.9 * q.s - ic - 2, '#5ac4ff', 5.5, 'center'); } } });
+    if (p.landed && (p.kind === 'weapon' || p.kind === 'pack') && p.uses > 0) { const s = SBY[p.k], ic = Math.max(8, Math.min(16, 0.5 * q.s)); drawIcon(s, q.x - ic / 2, q.y - 1.9 * q.s - ic, ic); glow(q.x, q.y - 1.2 * q.s, 4, '#4ab4ff', 0.6); if (distP(p.x, p.z) < 2.2) hudText('[' + keyLabel(KB.use) + '] ' + s.n + ' 줍기', q.x, q.y - 1.9 * q.s - ic - 2, '#5ac4ff', 5.5, 'center'); } } });
   // 손에 든 비컨
   if (PL.beacon && !(PL.fp && PL.aim)) list.push({ k: dist3(PL.x, PL.y + 1, PL.z) - 0.05, draw: () => { const q = proj(PL.x + Math.cos(PL.face) * -0.3, PL.y + 1.35, PL.z - Math.sin(PL.face) * -0.3); if (q.zc > 0.3 && ((STIME * 6) | 0) % 2) glow(q.x, q.y, 3, SBEAM[SD[PL.beacon].t === 'pod' ? 'pod' : 'orb'], 1); } });
 }
@@ -2264,6 +2266,113 @@ function drawPack() {   // 등의 탄약 배낭: 뒤가 보이는 방향일 때 
 
 'use strict';
 /* ============================================================
+   보스전 배낭 14종 — 헬포드에서 E로 줍고 X(배낭 키)로 사용
+   경비견류는 어깨 위 드론이 스스로 허수아비를 쏨
+   ============================================================ */
+const PKD = {
+  'b-jump': { name: '점프 팩', look: 'jump', cd: 10, use: () => { const f = moveDir(); PL.vy = 9.5; PL.vx = f[0] * 8; PL.vz = f[1] * 8; PL.onGround = false; PL.stance = 'stand'; PL.jumpT = 1; for (let i = 0; i < 14; i++) P3({ x: PL.x + rand(-0.3, 0.3), y: PL.y + 0.8, z: PL.z + rand(-0.3, 0.3), vx: rand(-1, 1), vy: rand(-4, -1), vz: rand(-1, 1), kind: 'fire', max: 0.4, r: 0.2 }); nz({ type: 'lowpass', f: 1200, d: 0.6, v: 0.3 }); osc({ f: 160, f2: 60, d: 0.5, v: 0.2, type: 'sawtooth' }); return true; } },
+  'b-supply': { name: '보급 팩', look: 'supply', uses: 4, use: () => { refillAll(); toast('보급 팩 사용 (' + (PL.packUses - 1) + '개 남음)'); S.click(1200, 0.1); osc({ f: 660, f2: 990, d: 0.2, v: 0.1, type: 'triangle', at: 0.05 }); return true; } },
+  'b-rover': { name: "'가드 독' 로버", look: 'dog', dog: { kind: 'laser', dps: 160, ap: 3, range: 25 } },
+  'b-dog': { name: "'가드 독'", look: 'dog', dog: { kind: 'gun', dmg: 55, ap: 2, rpm: 480, range: 30 } },
+  'b-breath': { name: "'가드 독' 독 브레스", look: 'dog', dog: { kind: 'gas', dps: 40, ap: 6, range: 14 } },
+  'b-k9': { name: "'가드 독' K-9", look: 'dog', dog: { kind: 'arc', dmg: 180, ap: 4, rpm: 60, range: 18 } },
+  'b-hotdog': { name: "'가드 독' 핫 도그", look: 'dog', dog: { kind: 'flame', dps: 200, ap: 3, range: 12 } },
+  'b-ballistic': { name: '탄도 방패 배낭', look: 'ballistic', front: 0.85 },
+  'b-shield': { name: '방어막 생성 팩', look: 'shield', bubble: 1 },
+  'b-directional': { name: '방향 방패', look: 'shield', cd: 0, hold: 1, front: 1 },
+  'b-hellbomb': { name: '휴대용 지옥폭탄', look: 'hellbomb', uses: 1, use: () => { toast('지옥폭탄 설치 — 10초 안에 25m 밖으로!', 3); HB.push({ x: PL.x, z: PL.z, t: 10 }); PL.pack = null; osc({ f: 800, d: 0.2, v: 0.15, type: 'square' }); return true; } },
+  'b-hover': { name: '호버 팩', look: 'jump', cd: 6, use: () => { PL.vy = 7; PL.onGround = false; PL.hoverT = 3.5; PL.stance = 'stand'; nz({ type: 'lowpass', f: 900, d: 0.5, v: 0.25 }); return true; } },
+  'b-warp': { name: '워프 팩', look: 'warp', cd: 3, use: () => { const f = camFwd(), L = Math.hypot(f[0], f[2]) || 1; let d = 9; const h = raycast(PL.x, PL.y + 1, PL.z, f[0] / L, 0, f[2] / L, 9); if (h.t < 9) d = Math.max(0, h.t - 0.6); for (let i = 0; i < 16; i++) P3({ x: PL.x, y: PL.y + rand(0.2, 1.6), z: PL.z, vx: rand(-2, 2), vy: rand(-1, 1), vz: rand(-2, 2), kind: 'debris', max: 0.4, col: pick(['#b07aff', '#ffffff']) }); PL.x += f[0] / L * d; PL.z += f[2] / L * d; collide(PL, 0.36); flash(0.2, '#b07aff'); osc({ f: 2000, f2: 200, d: 0.25, v: 0.15, type: 'sine' }); return true; } },
+  'b-c4': { name: 'C4 팩', look: 'c4', uses: 99, use: () => c4Use() }
+};
+for (const k in PKD) { const s = SBY[k]; if (s) PKD[k].name = s.n; SD[k] = { t: 'pod', call: 3, cd: 480, run: b => hellpod(b, 'pack', k) }; }
+KDEF.pack = 'KeyX'; KNAME.pack = '배낭 사용'; KGROUP[2][1].splice(4, 0, 'pack'); if (!KB.pack) KB.pack = 'KeyX';
+function moveDir() { const ix = (act('right') ? 1 : 0) - (act('left') ? 1 : 0), iz = (act('fwd') ? 1 : 0) - (act('back') ? 1 : 0), cy = PL.camYaw; if (!ix && !iz) return [Math.sin(PL.face), Math.cos(PL.face)]; const L = Math.hypot(ix, iz); return [(ix * Math.cos(cy) + iz * Math.sin(cy)) / L, (-ix * Math.sin(cy) + iz * Math.cos(cy)) / L]; }
+function equipPack(k) {
+  const d = PKD[k]; if (PL.pack === 'ammo' && WPN[2] && WPN[2].pack) toast('탄약 배낭을 내려놓았어요 — 지원무기 예비탄 없음', 2.4); else toast(d.name + ' 장착', 1.8);
+  if (PL.pack === 'ammo' && WPN[2] && WPN[2].pack) PL.mags[2] = 0;
+  PL.pack = k; PL.packUses = d.uses || 0; PL.packCd = 0; PL.shieldHP = d.bubble ? 150 : 0; PL.shieldT = 0;
+  DOG.on = !!d.dog; if (d.dog) { DOG.x = PL.x; DOG.y = PL.y + 2.2; DOG.z = PL.z; }
+  S.click(1400, 0.1); nz({ type: 'bandpass', f: 800, q: 2, d: 0.2, v: 0.14 });
+}
+/* ---------------- 배낭 사용 · 매 프레임 ---------------- */
+function packUpdate(dt) {
+  const k = PL.pack, d = PKD[k]; if (PL.packCd > 0) PL.packCd -= dt;
+  if (PL.jumpT > 0) { PL.jumpT -= dt; if (Math.random() < 0.7) P3({ x: PL.x, y: PL.y + 0.9, z: PL.z, vy: -3, kind: 'fire', max: 0.25, r: 0.15 }); }
+  if (PL.hoverT > 0) { PL.hoverT -= dt; if (!PL.onGround && act('pack')) { PL.vy = Math.max(PL.vy, 0.2); if (Math.random() < 0.6) P3({ x: PL.x, y: PL.y + 0.8, z: PL.z, vy: -3, kind: 'fire', max: 0.2, r: 0.12 }); } }
+  for (let i = HB.length - 1; i >= 0; i--) { const h = HB[i]; h.t -= dt; if (((h.t * 4) | 0) !== (((h.t + dt) * 4) | 0)) osc({ f: h.t < 3 ? 1400 : 900, d: 0.06, v: 0.12, type: 'square' }); if (h.t <= 0) { HB.splice(i, 1); explodeAt(h.x, 0.5, h.z, 25, 10000, null, { inner: 17, outer: 25, shock: 45, ap: 8, vis: 6, cine: true, mine: true }); mushroom(h.x, h.z); } }
+  if (d && d.bubble) { if (PL.shieldHP <= 0) { PL.shieldT += dt; if (PL.shieldT > 5) { PL.shieldHP = 150; PL.shieldT = 0; osc({ f: 500, f2: 900, d: 0.2, v: 0.08, type: 'sine' }); } } }
+  if (!d || PL.dead) return;
+  if (d.hold) PL.dirShield = act('pack');
+  if (actP('pack') && d.use) {
+    if (PL.packCd > 0) { toast('배낭 재충전 ' + PL.packCd.toFixed(1) + '초'); return; }
+    if (d.uses && PL.packUses <= 0) { toast('다 씀'); return; }
+    if (k === 'b-jump' && !PL.onGround) return;
+    if (d.use()) { if (d.uses) PL.packUses--; if (d.cd) PL.packCd = d.cd; }
+  }
+}
+// 피해 막기: 방어막 · 앞쪽 방패
+function packShield(dmg, from) {
+  const d = PKD[PL.pack]; if (!d) return dmg;
+  if (d.bubble && PL.shieldHP > 0) { const a = Math.min(PL.shieldHP, dmg); PL.shieldHP -= a; PL.shieldHit = 0.3; osc({ f: 900, f2: 400, d: 0.12, v: 0.12, type: 'sine' }); if (PL.shieldHP <= 0) { toast('방어막 깨짐'); PL.shieldT = 0; } return dmg - a; }
+  if (d.front && from) { const ang = Math.abs(angDiff(Math.atan2(from.x - PL.x, from.z - PL.z), d.hold ? PL.camYaw : PL.face + Math.PI)); const facing = d.hold ? PL.dirShield && ang < 1.2 : ang < 1.4; if (facing) { sparks3(PL.x, PL.y + 1, PL.z, 6, ['#7ac8ff', '#ffffff'], 2); return dmg * (1 - d.front); } }
+  return dmg;
+}
+/* ---------------- C4: 붙이고 터뜨리기 ---------------- */
+const C4S = [], HB = [];
+function c4Use() {
+  if (C4S.length >= 3 || (C4S.length && act('sprint'))) { for (const c of C4S) at(Math.random() * 0.15, () => explodeAt(c.x, c.y, c.z, 5, 900, null, { inner: 1.5, outer: 5, shock: 8, ap: 7, mine: true, cine: true })); C4S.length = 0; PL.c4Arm = false; osc({ f: 1600, d: 0.05, v: 0.12, type: 'square' }); return true; }
+  const n = nadeStart(); n.c4 = true; n.life = 0; C4S.push(n); PL.c4Arm = C4S.length >= 1; toast('C4 ' + C4S.length + '/3 — ' + keyLabel(KB.pack) + ' 한 번 더: ' + (C4S.length >= 3 ? '기폭' : '추가 · 3개 뒤엔 기폭'), 2); S.whoosh(0.25, 0.1, 500, 1600); return true;
+}
+function updateC4(dt) { for (const c of C4S) { c.life += dt; if (!c.stuck) { nadeStep(c, dt); if (c.vy === 0 && Math.hypot(c.vx, c.vz) < 0.6) c.stuck = true; } } }
+/* ---------------- 경비견 드론 ---------------- */
+const DOG = { on: false, x: 0, y: 2, z: 0, t: 0, tgt: null, fireT: 0, acc: 0 };
+function dogUpdate(dt) {
+  const d = PKD[PL.pack]; DOG.on = !!(d && d.dog) && !PL.dead; if (!DOG.on) return; const G = d.dog; DOG.t += dt;
+  // 어깨 위에서 맴돌다가 표적 쪽으로
+  const hx = PL.x + Math.cos(DOG.t * 0.8) * 1.6, hz = PL.z + Math.sin(DOG.t * 0.8) * 1.6, hy = PL.y + 2.4 + Math.sin(DOG.t * 2) * 0.2, k = 1 - Math.exp(-dt * 3);
+  DOG.x += (hx - DOG.x) * k; DOG.y += (hy - DOG.y) * k; DOG.z += (hz - DOG.z) * k;
+  let best = null; for (const t of DUMS) { if (!t.alive) continue; const dist = Math.hypot(t.x - DOG.x, t.z - DOG.z); if (dist < G.range && (!best || dist < best.dist)) best = { t, dist }; }
+  DOG.tgt = best && best.t; if (!DOG.tgt) return; const T = DOG.tgt, ty = T.h * 0.6;
+  if (G.kind === 'gun' || G.kind === 'arc') { DOG.fireT -= dt; if (DOG.fireT <= 0) { DOG.fireT = 60 / G.rpm; const r = hurtDummy(T, G.dmg, G.ap, T.x, ty, T.z, DOG.x, DOG.z, { quiet: true }); if (r && r.dmg) pop(T.x, T.h, T.z, String(r.dmg), '#9ad8ff', 5); if (G.kind === 'gun') { tracer3({ x: DOG.x, y: DOG.y, z: DOG.z }, { x: T.x, y: ty, z: T.z }, '#ffe9a0', 0.05); S.crack(0.12, 3000, 0.03); } else { ARCS.push({ a: { x: DOG.x, y: DOG.y, z: DOG.z }, b: { x: T.x, y: ty, z: T.z }, t: 0 }); osc({ f: 2600, f2: 800, d: 0.1, v: 0.08, type: 'sawtooth' }); } } }
+  else { DOG.acc += dt; DOG.beam = T; if (G.kind === 'flame' || G.kind === 'gas') for (let i = 0; i < 2; i++) { const dx = T.x - DOG.x, dz = T.z - DOG.z, L = Math.hypot(dx, dz) || 1, sp = rand(8, 12); P3({ x: DOG.x, y: DOG.y, z: DOG.z, vx: dx / L * sp + rand(-1, 1), vy: (ty - DOG.y) / L * sp, vz: dz / L * sp + rand(-1, 1), drag: 1.5, kind: G.kind === 'gas' ? 'cloud' : 'fire', col: '#9ac04a', max: 0.8, r: 0.25 }); }
+    if (DOG.acc >= 0.25) { const r = hurtDummy(T, G.dps * DOG.acc, G.ap, T.x, ty, T.z, DOG.x, DOG.z, { quiet: true }); DOG.acc = 0; if (r && r.dmg) pop(T.x, T.h, T.z, String(r.dmg), G.kind === 'gas' ? '#a8e060' : '#ff9a6a', 5); if (G.kind === 'gas') T.stun = 1; } }
+}
+/* ---------------- 그리기 ---------------- */
+const PACKLOOK = { ammo: ['#2a2e36', '#e8b812'], jump: ['#3a3e48', '#ff8c3a'], supply: ['#2c3846', '#5ac4ff'], dog: ['#30353e', '#9ad8ff'], ballistic: ['#4a5060', '#c8c8c8'], shield: ['#2c3846', '#7ac8ff'], hellbomb: ['#1c1e24', '#e8b812'], warp: ['#2a2238', '#b07aff'], c4: ['#3a3a2a', '#ff3a2a'] };
+function drawPackLook() {
+  if (!PL.pack || (PL.fp && PL.aim)) return;
+  const look = PL.pack === 'ammo' ? 'ammo' : (PKD[PL.pack] || {}).look; if (!look) return;
+  const rel = angDiff(PL.face, PL.camYaw); if (Math.abs(rel) > 1.6) return;
+  const [c0, c1] = PACKLOOK[look], h = PL.stance === 'prone' ? 0.42 : PL.stance === 'crouch' ? 0.95 : 1.25, bx = PL.x - Math.sin(PL.face) * 0.3, bz = PL.z - Math.cos(PL.face) * 0.3, q = proj(bx, PL.y + h, bz); if (q.zc < 0.5) return;
+  const w = (look === 'hellbomb' ? 0.5 : 0.42) * q.s * Math.max(0.35, Math.cos(rel)), hh = (PL.stance === 'prone' ? 0.3 : look === 'hellbomb' ? 0.75 : 0.55) * q.s;
+  ctx.globalAlpha = q.zc < 2.6 ? clamp((q.zc - 0.8) / 1.8, 0.22, 1) : 1;
+  rect(q.x - w / 2, q.y - hh / 2, w, hh, c0); rect(q.x - w / 2, q.y - hh / 2, w, Math.max(1, hh * 0.12), mixC(c0, '#ffffff', 0.2));
+  if (look === 'jump') { rect(q.x - w * 0.45, q.y + hh * 0.3, w * 0.25, hh * 0.3, '#1c1e24'); rect(q.x + w * 0.2, q.y + hh * 0.3, w * 0.25, hh * 0.3, '#1c1e24'); if (PL.jumpT > 0 || (PL.hoverT > 0 && !PL.onGround)) { glow(q.x - w * 0.32, q.y + hh * 0.7, 4, c1, 1); glow(q.x + w * 0.32, q.y + hh * 0.7, 4, c1, 1); } }
+  else if (look === 'supply') { rect(q.x - w * 0.08, q.y - hh * 0.25, w * 0.16, hh * 0.5, c1); rect(q.x - w * 0.25, q.y - hh * 0.08, w * 0.5, hh * 0.16, c1); }
+  else if (look === 'hellbomb') { rect(q.x - w / 2, q.y - hh * 0.1, w, hh * 0.2, c1); if (PL.hbT > 0 && ((PL.hbT * 6) | 0) % 2) glow(q.x, q.y - hh * 0.4, 5, '#ff3a2a', 1); }
+  else rect(q.x - w / 2, q.y + hh * 0.1, w, Math.max(1, hh * 0.1), c1);
+  ctx.globalAlpha = 1;
+}
+function drawPackWorld(list) {
+  if (DOG.on) list.push({ k: dist3(DOG.x, DOG.y, DOG.z), draw: () => { const q = proj(DOG.x, DOG.y, DOG.z); if (q.zc < 0.4) return; const s = Math.max(2, 0.25 * q.s); circ(q.x, q.y, s, '#30353e'); rect(q.x - s * 1.4, q.y - s * 0.2, s * 2.8, s * 0.4, '#454a55'); glow(q.x, q.y + s * 0.3, 2.5, PKD[PL.pack].dog.kind === 'gas' ? '#9ac04a' : '#9ad8ff', 0.9);
+    const G = PKD[PL.pack].dog; if (DOG.tgt && G.kind === 'laser') { const b = proj(DOG.tgt.x, DOG.tgt.h * 0.6, DOG.tgt.z); if (b.zc > 0.3) { line(q.x, q.y, b.x, b.y, '#ff7a5a', 1); glowLine(q.x, q.y, b.x, b.y, '#ff5a3a', 0.8); } } } });
+  for (const h of HB) list.push({ k: dist3(h.x, 0.6, h.z), draw: () => { const q = proj(h.x, 0, h.z); if (q.zc < 0.4) return; const s = 0.45 * q.s; rect(q.x - s / 2, q.y - s * 1.6, s, s * 1.6, '#1c1e24'); rect(q.x - s / 2, q.y - s * 0.9, s, s * 0.2, '#e8b812'); if (((h.t * 6) | 0) % 2) glow(q.x, q.y - s * 1.6, 5, '#ff3a2a', 1); if (q.zc < 70) hudText(h.t.toFixed(1), q.x, q.y - s * 1.9, '#ff3a2a', 7, 'center'); } });
+  for (const c of C4S) list.push({ k: dist3(c.x, c.y, c.z), draw: () => { const q = proj(c.x, c.y, c.z); if (q.zc < 0.3) return; const s = Math.max(1, 0.12 * q.s); rect(q.x - s, q.y - s * 0.6, s * 2, s * 1.2, '#3a3a2a'); if (((c.life * 4) | 0) % 2) glow(q.x, q.y - s, 2.5, '#ff3a2a', 1); } });
+  const d = PKD[PL.pack];
+  if (d && d.bubble && PL.shieldHP > 0 && !(PL.fp && PL.aim)) list.push({ k: dist3(PL.x, PL.y + 1, PL.z) - 0.3, draw: () => { const q = proj(PL.x, PL.y + 0.9, PL.z); if (q.zc < 0.5) return; ctx.globalAlpha = 0.18 + (PL.shieldHit > 0 ? 0.3 : 0); ctx.strokeStyle = '#7ac8ff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(q.x, q.y, 1.4 * q.s, 1.2 * q.s, 0, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 0.06; ctx.fillStyle = '#7ac8ff'; ctx.fill(); ctx.globalAlpha = 1; if (PL.shieldHit > 0) PL.shieldHit -= 1 / 60; } });
+  if (d && d.hold && PL.dirShield) list.push({ k: dist3(PL.x, PL.y + 1, PL.z) - 0.4, draw: () => { const fx = Math.sin(PL.camYaw), fz = Math.cos(PL.camYaw), q = proj(PL.x + fx * 1.2, PL.y + 1, PL.z + fz * 1.2); if (q.zc < 0.5) return; ctx.globalAlpha = 0.3; rect(q.x - 0.9 * q.s, q.y - 0.9 * q.s, 1.8 * q.s, 1.8 * q.s, '#7ac8ff'); ctx.globalAlpha = 1; } });
+}
+function drawPackHud() {
+  if (HB.length) hudText('지옥폭탄 ' + HB[0].t.toFixed(1) + ' · ' + Math.round(distP(HB[0].x, HB[0].z)) + 'm', W / 2, 60, '#ff3a2a', 10, 'center');
+  const d = PKD[PL.pack]; if (!d) return; const x = 12, y = H - 52;
+  hudText(d.name + (d.uses && d.uses < 90 ? ' ' + PL.packUses : '') + (PL.packCd > 0 ? ' · ' + PL.packCd.toFixed(1) + '초' : '') + ' [' + keyLabel(KB.pack) + ']', x, y, '#9ad8ff', 5);
+  if (d.bubble) bar(x, y + 3, 50, 2, PL.shieldHP / 150, '#7ac8ff');
+
+}
+
+'use strict';
+/* ============================================================
    보스전 PC 모드 — 루프 · 그리기 순서 · HUD · 메뉴 · 입력 연결
    ============================================================ */
 const BQ = new URLSearchParams(location.search), TEST = BQ.get('test') === '1';
@@ -2293,7 +2402,7 @@ function render(real) {
   list.push({ k: pk, draw: drawDiver });
   for (const p of parts) { const k = dist3(p.x, p.y, p.z); if ((p.kind === 'cloud' || p.kind === 'smoke') && k < 2.4) continue; list.push({ k, draw: () => drawPart(p) }); }   // 카메라 바로 앞 연기는 생략
   list.push({ k: 0.01, draw: drawNades });
-  drawStratWorld(list); drawSupportWorld(list); list.push({ k: pk - 0.01, draw: drawPack });
+  drawStratWorld(list); drawSupportWorld(list); drawPackWorld(list); list.push({ k: pk - 0.01, draw: drawPackLook });
   list.sort((a, b) => b.k - a.k);
   for (const it of list) it.draw();
   fxLighting();
@@ -2301,7 +2410,7 @@ function render(real) {
   ctx.setTransform(1, 0, 0, 1, 0, 0); postFx(); fxGrade(fac);
   BASE();
   if (PL.fp && PL.aim && !PL.dead) drawViewmodel();
-  drawPops(); hud(); drawStratHud(); drawSupportHud();
+  drawPops(); hud(); drawStratHud(); drawSupportHud(); drawPackHud();
   if (flashA > 0) { ctx.globalAlpha = Math.min(0.7, flashA); rect(0, 0, W, H, flashC); ctx.globalAlpha = 1; }
 }
 function drawHoles(fac) { for (const h of HOLES) { h.life += 1 / 60; const q = proj(h.x, 0.01, h.z); if (q.zc < 0.5 || q.zc > 40) continue; const r = Math.max(0.5, 0.05 * q.s); ctx.globalAlpha = clamp(1 - h.life / 25, 0, 0.8); circ(q.x, q.y, r, '#140e0a', 0.35); } ctx.globalAlpha = 1; }
