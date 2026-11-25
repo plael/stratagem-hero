@@ -1781,7 +1781,7 @@ function weaponFx(key, e, k2) {
   if (ST) { fx.at(0.42, () => GUN.hatch()); fx.at(0.55, () => sfx.deploy()); } else fx.at(0.45, () => { G.armed = w.c; });
   const SINK = ST ? 0.82 : 0.62;   // 내용물을 꺼내면 헬포드는 땅속으로 접혀 사라짐 (시야 확보)
   let sv = null;
-  if (ST && POV_ON.has(key)) fx.at(T0 - 0.08, () => {   // 센트리 조준 카메라로
+  if (ST && POV_GUARD_CAM && POV_ON.has(key)) fx.at(T0 - 0.08, () => {   // 센트리 조준 카메라로
     sv = { kind: 'sentry', fx, e, ST, hideLouis: true, ground: true, label: (STRATS.find(s => s.k === key) || {}).n || '',
       cam: P => { const a = aim(), E = { x: head.x, y: head.y + (ST === 'tesla' ? 0.1 : 0.18), z: head.z - 0.3 }, dx = a.x - E.x, dz = a.z - E.z, dist = Math.hypot(dx, dz) || 1;
         P.yaw = P.t < 0.02 ? Math.atan2(dx, dz) : lerp(P.yaw, Math.atan2(dx, dz), 0.25); P.rc = rc / 3;
@@ -1969,7 +1969,7 @@ function droneFx(k, e) {
   fx.at(0.78, () => { dust3(pod.x, pod.z, 8, 0.35); });
   fx.at(0.62, () => { dr.on = true; osc({ f: 180, f2: 320, d: 0.5, v: 0.06, type: 'sawtooth', am: [45, 0.5] }); GUN.deploy && sfx.deploy(); });
   let dv = null;
-  if (POV_ON.has(k)) fx.at(T0 - 0.15, () => {   // 드론 카메라로
+  if (POV_GUARD_CAM && POV_ON.has(k)) fx.at(T0 - 0.15, () => {   // 드론 카메라로
     dv = { kind: 'drone', fx, e, hideLouis: true, ground: true, label: (STRATS.find(s => s.k === k) || {}).n || '',
       cam: P => { const a = aim(), E = { x: dr.x, y: dr.y + 0.12, z: dr.z - 0.35 }, dx = a.x - E.x, dz = a.z - E.z, dist = Math.hypot(dx, dz) || 1;
         setVC({ on: true, x: E.x, y: E.y, z: E.z, yaw: Math.atan2(dx, dz), pitch: Math.atan2(E.y - a.y, dist), cy: H * 0.5, f: FOCAL * clamp(dist / 5, 1.2, 2.2) }); P.roll = Math.sin(fx.t * 3) * 0.03; P.speed = 0.05; } };
@@ -2196,6 +2196,7 @@ const SPACE = {}; for (const k in SPACE_IMG) { const im = new Image(); im.src = 
 const POV_Q = new URLSearchParams(location.search);
 const POV_KEYS = STRATS.map(s => s.k).filter(k => !k.startsWith('w-'));   // 지원 무기는 조준 모드, 나머지는 모두 시점 연출
 const POV_ON = new Set(POV_KEYS);
+const POV_GUARD_CAM = false;   // 센트리 · 가드 독은 3인칭 그대로 (요청으로 1인칭 끔, true 로 다시 켬)
 if (POV_Q.get('pov') === 'off') POV_ON.clear();
 let POV = null;
 function enterPOV(o) { o.t = 0; POV = o; setVC({ yaw: 0, f: FOCAL }); camReset(); document.body.classList.add('cine'); flash(0.7, '#ffffff'); nz({ type: 'bandpass', f: 1800, f2: 300, d: 0.35, v: 0.22 }); }
