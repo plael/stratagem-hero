@@ -398,6 +398,7 @@ function fxBegin(sx, sy, fac) {
   glg.globalCompositeOperation = 'source-over'; glg.globalAlpha = 1; glg.clearRect(0, 0, W, H); glg.globalCompositeOperation = 'lighter';
   lmg.globalCompositeOperation = 'source-over'; lmg.globalAlpha = 1; lmg.fillStyle = LOOK[fac].amb; lmg.fillRect(0, 0, W / 2, H / 2);
   if (typeof POV !== 'undefined' && POV && POV.space) { lmg.fillStyle = '#e8ecf4'; lmg.fillRect(0, 0, W / 2, H / 2); lmg.globalCompositeOperation = 'lighter'; return; }
+  if (typeof POV !== 'undefined' && POV && POV.kind === 'aim') { lmg.fillStyle = mixC(LOOK[fac].ambTop, '#c8d8ff', 0.45); lmg.fillRect(0, 0, W / 2, H / 2); lmg.globalCompositeOperation = 'lighter'; return; }   // 시간 정지: 차갑고 밝게
   if (typeof POV !== 'undefined' && POV && POV.kind === 'eagle') { lmg.fillStyle = mixC(LOOK[fac].ambTop, '#ffffff', 0.4); lmg.fillRect(0, 0, W / 2, H / 2); lmg.globalCompositeOperation = 'lighter'; return; }   // 위에서 내려다볼 땐 고르게
   // 환경광: 하늘 쪽은 조금 밝게
   const gr = lmg.createLinearGradient(0, 0, 0, H / 2); gr.addColorStop(0, LOOK[fac].ambTop); gr.addColorStop(0.45, LOOK[fac].amb); gr.addColorStop(1, LOOK[fac].ambLow);
@@ -1143,17 +1144,17 @@ function updateEnemy(e, dt) {
     const n = D.move === 'lurch' ? 9 : D.steps || 5, st = Math.floor(e.p * n);
     if (st !== e.step) {
       e.step = st;
-      if (D.move === 'stomp') { osc({ f: 70, f2: 30, d: 0.28, v: Math.min(0.7, 0.2 + D.stepShake * 2.5), dist: true }); nz({ type: 'lowpass', f: 500, d: 0.22, v: 0.18 }); addShake(D.stepShake * (12 / e.z)); dust3(e.x + rand(-D.w, D.w) * 0.3, e.z, 6, D.w * 0.3); }
-      else nz({ type: 'bandpass', f: 400, q: 2, d: 0.12, v: 0.1 });
+      if (D.move === 'lurch') nz({ type: 'lowpass', f: 260, d: 0.1, v: 0.03 });
+      else if (D.move === 'stomp') { osc({ f: 58, f2: 36, d: 0.16, v: Math.min(0.16, 0.06 + D.stepShake * 0.5), a: 0.01 }); nz({ type: 'lowpass', f: 220, d: 0.12, v: 0.04 }); addShake(D.stepShake * (12 / e.z)); dust3(e.x + rand(-D.w, D.w) * 0.3, e.z, 6, D.w * 0.3); }
     }
   }
   if (D.move === 'charge') {
     const rush = (e.p > 0.35 && e.p < 0.5) || (e.p > 0.74 && e.p < 0.9);
-    if (rush && !e.rush) { nz({ type: 'lowpass', f: 300, d: 0.7, v: 0.35, am: [14, 0.5], a: 0.03 }); osc({ f: 60, f2: 40, d: 0.6, v: 0.25, type: 'sawtooth', am: [14, 0.6], dist: true }); addShake(0.14); }
+    if (rush && !e.rush) { nz({ type: 'lowpass', f: 180, d: 0.5, v: 0.08, a: 0.05 }); addShake(0.14); }
     e.rush = rush;
     if (rush && Math.random() < 0.7) P3({ x: e.x + rand(-0.8, 0.8), y: 0.1, z: e.z + 0.3, vx: rand(-1, 1), vy: rand(0.2, 0.8), vz: 1, drag: 1, kind: 'smoke', max: 0.8, r: rand(0.15, 0.3) });
   }
-  if (D.move === 'roll' && Math.random() < 0.25) S.click(300 + Math.random() * 300, 0.03);
+  if (D.move === 'roll' && Math.random() < 0.05) S.click(160 + Math.random() * 120, 0.01);
   if (D.move === 'fly') { const dive = clamp((e.p - 0.5) / 0.35, 0, 1); e.alt = 3.8 - 2.6 * dive * dive + Math.sin(e.t * 3) * 0.25; if (e.p > 0.5 && !e.dived) { e.dived = true; heavyVoice('ray'); } }
   if (e.struct) { if (e.door > 0) e.door -= dt; if (D.spawn === 'trooper' && Math.random() < 0.15) P3({ x: e.x + 0.6, y: D.h + 0.4, z: e.sz, vx: rand(-0.2, 0.2), vy: rand(0.5, 1), drag: 0.4, kind: 'smoke', max: 1.8, r: rand(0.2, 0.35) }); }
   if ((D.atk === 'cannon' || D.atk === 'laser') && e.p > 0.82) e.charge = true;
@@ -1429,9 +1430,10 @@ function eagleFx(e, k) {
   const POVE = POV_ON.has(k), LONG = !BOMB;                                              // 이글 조종석 시점 (기총소사·로켓은 세로로 진입)
   const LABEL = { line: '공중타격', strafe: '기총소사', rocket: '110mm 로켓', '500': '500kg 폭탄', napalm: '네이팜', smoke: '연막', gas: '가스', cluster: '집속탄' }[mode];
   const jet = { x: tx * 0.6 + 0.4, y: 3.8, z: 0.8, vx: 0, vz: 26, on: false };
-  if (POVE && LONG) Object.assign(jet, { x: tx, y: 11, z: tz - 62, vx: 0, vz: 30 });
+  if (POVE && LONG) Object.assign(jet, { x: tx, y: 16, z: tz - 75, vx: 0, vz: 30 });
+  const TIN = 1.35;   // 조종석 진입 전 3인칭 급강하 장면 (0.45 ~ 1.35)
   const SIDE = POVE && BOMB;   // 공중타격류: 조종석 왼쪽 창으로 내려다보며 왼쪽 → 오른쪽으로 지나감 (적은 정면, 폭탄 줄은 화면 가로)
-  if (BOMB) Object.assign(jet, SIDE ? { x: tx - 46, y: 6.6, z: tz - 5, vx: 30, vz: 0 } : { x: tx - 30, y: 3.1, z: tz + 2.6, vx: 32, vz: 0 });
+  if (BOMB) Object.assign(jet, SIDE ? { x: tx - 70, y: 16, z: tz - 5, vx: 30, vz: 0 } : { x: tx - 30, y: 3.1, z: tz + 2.6, vx: 32, vz: 0 });
   if (POVE) fx.end = 5.6; else if (BOMB) fx.end = mode === '500' ? 4.6 : 3.2;
   const bombs = [], rockets = []; let done = false, doneT = 0, nextB = 0, passed = false;
   const GB = 16;
@@ -1458,9 +1460,22 @@ function eagleFx(e, k) {
       for (let x = tx - 50; x < tx + 40; x += rand(2.5, 4.5)) if (Math.abs(x - tx) > 12) cl.push({ x, y: rand(4.4, 5.6), z: tz - 5 + rand(0.8, 3.2), r: rand(1.2, 2.6), a: 0.45 });   // 창밖 아래로 스치는 구름
     }
     nz({ type: 'highpass', f: 900, f2: 1600, d: 4.2, v: 0.12 });   // 바람
-    pv = { kind: 'eagle', win: SIDE, fx, e, hideLouis: true, tx, tz, spd: jet.vx || jet.vz, hits: 0, rel: 0, kick: 0, boost: 0, clouds: cl, city, speed: 1, zoom: 0, label: LABEL,
+    pv = { kind: 'eagle', phase: 'chase', win: false, fx, e, hideLouis: true, tx, tz, spd: jet.vx || jet.vz, hits: 0, rel: 0, kick: 0, boost: 0, clouds: cl, city, speed: 1, zoom: 0, label: LABEL,
       cam: P => {
         if (!e.dead) { const a0 = aimOf(e); P.tx = a0.x; P.tz = a0.z; }
+        if (P.phase === 'chase') {   // 3인칭: 급강하하는 이글을 옆(가로 폭격) 또는 뒤(기총·로켓)에서 → 끝에 조종석으로 밀고 들어감
+          const u = clamp((fx.t - (TIN - 0.4)) / 0.4, 0, 1), us = u * u * (3 - 2 * u), eyeY = jet.y + 0.4;
+          let c0, look, yaw1, pitch1;
+          if (SIDE) { c0 = { x: jet.x - 1.2, y: jet.y + 0.8, z: jet.z - 12 }; look = { x: jet.x + 1.5, y: jet.y + 0.7, z: jet.z };
+            const hx = P.tx - jet.x, hz = P.tz - jet.z; yaw1 = clamp(Math.atan2(hx, hz), -0.7, 0.7); pitch1 = clamp(Math.atan2(eyeY - 0.6, Math.hypot(hx, hz)), 0.3, 1.2); }
+          else { c0 = { x: jet.x + 1.6, y: jet.y + 2.0, z: jet.z - 8 }; look = { x: jet.x, y: jet.y - 0.6, z: jet.z + 5 }; yaw1 = 0; pitch1 = clamp(Math.atan2(jet.y - 0.4, Math.max(0.5, P.tz - jet.z + 0.8)), 0.22, 1.25); }
+          const x = lerp(c0.x, jet.x, us), y = lerp(c0.y, eyeY, us), z = lerp(c0.z, jet.z, us), dx = look.x - x, dz = look.z - z;
+          const yaw0 = Math.atan2(dx, dz), pitch0 = Math.atan2(y - look.y, Math.hypot(dx, dz));
+          setVC({ on: true, x, y, z, yaw: lerp(yaw0, yaw1, us), pitch: lerp(pitch0, pitch1, us), cy: H * 0.5, f: FOCAL * lerp(0.95, 0.86, us) });
+          P.roll = 0; P.spd = jet.vx || jet.vz; P.speed = 1.1 + us * 0.8;
+          const fq = SIDE ? proj(jet.x + 300, jet.y - 60, jet.z) : proj(jet.x, jet.y - 60, jet.z + 300); P.foe = fq.zc > 0.6 ? [fq.x, fq.y] : [W * 2, H * 0.5];
+          return;
+        }
         if (SIDE) {   // 조종석 왼쪽 창: 지나가는 동안 고개를 돌려 표적을 계속 봄
           const eyeY = jet.y + 0.4, hx = P.tx - jet.x, hz = P.tz - jet.z, lim = mode === '500' ? 1.35 : 0.7;
           const yaw = clamp(Math.atan2(hx, hz), -lim, lim), pitch = clamp(Math.atan2(eyeY - 0.6, Math.hypot(hx, hz)), 0.3, 1.2);
@@ -1484,6 +1499,7 @@ function eagleFx(e, k) {
       } };
     enterPOV(pv);
   });
+  if (POVE) fx.at(TIN, () => { if (!pv) return; pv.phase = 'cockpit'; pv.win = SIDE; flash(0.45, '#ffffff'); nz({ type: 'bandpass', f: 900, f2: 2600, d: 0.3, v: 0.16 }); });
   const finish = (lv = 2) => { if (!done) { done = true; doneT = fx.t; killTarget(e, mode === 'napalm' ? 'burn' : mode === 'gas' ? 'melt' : 'fling', lv); } };
   const drop = d => {   // 떨어질 자리에 정확히 닿도록 수평 속도를 정해 놓음
     const y0 = jet.y - 0.3, tf = Math.sqrt(2 * Math.max(0.2, y0 - 0.2) / GB);
@@ -1523,12 +1539,15 @@ function eagleFx(e, k) {
   fx.tick = dt => {
     if (jet.on) {
       jet.x += jet.vx * dt; jet.z += jet.vz * dt;
-      if (!BOMB && !POVE) jet.y = Math.max(2.6, jet.y - dt * 0.6);
+      const y0 = jet.y;
+      if (POVE && fx.t < TIN) { const k = clamp((fx.t - 0.4) / (TIN - 0.4), 0, 1); jet.y = lerp(16, SIDE ? 6.6 : 6.0, k * k * (3 - 2 * k)); }
+      else if (!BOMB && !POVE) jet.y = Math.max(2.6, jet.y - dt * 0.6);
       else if (POVE && LONG) { if (!done) jet.y = Math.max(4.4, jet.y - dt * 5.5); else if (fx.t > doneT + 0.35) jet.y += dt * (fx.t - doneT - 0.35) * 12;
         if (done && fx.t > doneT + 0.3) { pv && (pv.boost = Math.min(1, pv.boost + dt * 2)); jet.vz = Math.min(42, jet.vz + dt * 14); }
         if (done && fx.t > doneT + 1.45 && POV && POV.fx === fx) exitPOV(); }
       else if (SIDE) { if (mode === '500' && nextB >= plan.length) jet.vx = Math.max(12, jet.vx - dt * 16);   // 500kg: 속도를 늦추고 돌아봄
         if (done && fx.t > doneT + 1.1 && POV && POV.fx === fx) exitPOV(); }
+      jet.vy = (jet.y - y0) / Math.max(dt, 1e-4);
       // 떨구기: 일반 시점은 기체 바로 아래로 (속도 55%), 조종석 시점은 앞으로 던지듯 (착탄이 시야 안에 들어오게)
       while (BOMB && nextB < plan.length) {
         const d = plan[nextB], tf = Math.sqrt(2 * Math.max(0.2, jet.y - 0.5) / GB);
@@ -1578,15 +1597,17 @@ function eagleFx(e, k) {
     }
     for (const r of rockets) if (!r.hit && r.cx != null) { const q = proj(r.cx, r.cy, r.cz); if (q.zc < 1) continue; const k = clamp(q.s * 0.06, 1, 4); glow(q.x, q.y + k, 3 + k, '#ff8c1e', 0.8); rect(q.x - k / 2, q.y - k / 2, k, k, '#c4ccd6'); rect(q.x - k / 2, q.y + k / 2, k, 1, '#ff8c1e'); }
   });
-  fx.jet = () => jet.on && !(POV && POV.fx === fx) && (BOMB ? jet.x < tx + 45 : jet.z < 90) ? { z: jet.z, x: jet.x, draw: () => {
-    if (!BOMB) { drawObj(SPR_JET, jet.x, jet.y, jet.z, 0.11); const q = proj(jet.x, jet.y, jet.z); if (((fx.t * 20) | 0) % 2) rect(q.x - 1, q.y + 1, 2, 1, '#ffd630'); return; }
+  fx.jet = () => jet.on && !(POV && POV.fx === fx && POV.phase !== 'chase') && (BOMB ? jet.x < tx + 45 : jet.z < 90) ? { z: jet.z, x: jet.x, draw: () => {
+    if (!BOMB) { const ch = POV && POV.fx === fx; if (ch) { const q0 = proj(jet.x, jet.y + 0.1, jet.z - 1.6); glow(q0.x, q0.y, 8, '#7ad8ff', 1); light(q0.x, q0.y, 70, '#9ad8ff', 0.6); }
+      drawObj(SPR_JET, jet.x, jet.y, jet.z, 0.11); const q = proj(jet.x, jet.y, jet.z); if (((fx.t * 20) | 0) % 2) rect(q.x - 1, q.y + 1, 2, 1, '#ffd630'); return; }
     // 가로로 스쳐 가는 이글: 땅 그림자 · 비행운 · 잔상 · 엔진 불빛
     const q = proj(jet.x, jet.y, jet.z); if (q.zc < 0.6) return;
     shadow(jet.x - 0.4, jet.z, 2.6, 0.2);
     const tq = proj(jet.x - 1.6, jet.y + 0.05, jet.z), tq2 = proj(jet.x - 12, jet.y + 0.25, jet.z);
     ctx.globalAlpha = 0.3; line(tq2.x, tq2.y, tq.x, tq.y, '#dfe8f4', Math.max(1, q.s * 0.06)); ctx.globalAlpha = 1; glowLine(tq2.x, tq2.y, tq.x, tq.y, '#9ad8ff', 0.4);
-    const js = SIDE ? 0.15 : 0.11; for (let i = 3; i >= 1; i--) { ctx.globalAlpha = 0.2 / i; drawObj(SPR_JET_SIDE, jet.x - i * jet.vx * (SIDE ? 0.02 : 0.014), jet.y, jet.z, js); }
-    ctx.globalAlpha = 1; drawObj(SPR_JET_SIDE, jet.x, jet.y, jet.z, js); glow(tq.x, tq.y, 6, '#7ad8ff', 1); light(tq.x, tq.y, 60, '#9ad8ff', 0.5);
+    const js = SIDE ? 0.15 : 0.11, q1 = proj(jet.x + jet.vx * 0.1, jet.y + (jet.vy || 0) * 0.1, jet.z), rot = SIDE ? Math.atan2(q1.y - q.y, q1.x - q.x) : 0;   // 급강하 중엔 기수가 숙여짐
+    for (let i = 3; i >= 1; i--) { ctx.globalAlpha = 0.2 / i; drawObj(SPR_JET_SIDE, jet.x - i * jet.vx * (SIDE ? 0.02 : 0.014), jet.y - i * (jet.vy || 0) * 0.02, jet.z, js, { rot }); }
+    ctx.globalAlpha = 1; drawObj(SPR_JET_SIDE, jet.x, jet.y, jet.z, js, rot ? { rot } : {}); glow(tq.x, tq.y, 6, '#7ad8ff', 1); light(tq.x, tq.y, 60, '#9ad8ff', 0.5);
   } } : null;
   fx.xf = () => tx;
   fx.zf = () => tz - 0.05; return fx;
@@ -1630,7 +1651,7 @@ function stepProj(p, dt) {
 }
 function drawProj(p) {
   if (p.hit || p.at > 0 || p.x == null) return;
-  const q = proj(p.x, p.y, p.z), u = q.s;
+  const q = proj(p.x, p.y, p.z), u = VCAM.on ? Math.min(q.s, 70) : q.s; if (q.zc < 0.7) return;   // 1인칭일 땐 눈앞 탄이 화면을 덮지 않게
   const sz = m => Math.max(1, Math.round(u * m));
   if (p.kind === 'rocket') { rect(q.x - sz(0.05), q.y - sz(0.05), sz(0.1), sz(0.1), '#c4ccd6'); rect(q.x - sz(0.03), q.y + sz(0.05), sz(0.06), sz(0.06), '#ff8c1e'); }
   else if (p.kind === 'mini') rect(q.x, q.y, sz(0.05), sz(0.05), '#c4ccd6');
@@ -2300,6 +2321,12 @@ function drawEagleHud(P) {
   if (P.hits) hudText('IMPACT ×' + P.hits, W / 2, H - 18, '#ffe060', 5, 'center');
   if (P.boost > 0 && ((t * 6) | 0) % 2) hudText('AFTERBURNER', 22, 34, '#ffb060', 4);
 }
+/* ---------------- 이글 급강하 3인칭 (조종석 진입 전) ---------------- */
+function drawEagleChase(P) {
+  const t = P.t, G2 = '#7dffb4', k = clamp(t / 0.25, 0, 1);
+  rect(0, 0, W, 14 * k, '#000000'); rect(0, H - 14 * k, W, 14 * k, '#000000');   // 시네마 띠
+  hudText('EAGLE-1 · ' + (P.label || '공중타격'), 10, 24, G2, 5); if (((t * 4) | 0) % 2) hudText('급강하', 10, 31, '#ffe060', 5);
+}
 /* ---------------- 이글 조종석 왼쪽 창 (공중타격류) ---------------- */
 function drawEagleWindow(P) {
   const t = P.t, G2 = '#7dffb4', fr = (t * 30) | 0;
@@ -2370,9 +2397,323 @@ function povBackground(fac, real) {   // true 면 기본 배경 대신 그림
 function povOverlay() {
   if (!POV) return;
   if (POV.kind === 'exo') drawExoCockpit(POV);
-  else if (POV.kind === 'eagle') { if (POV.win) drawEagleWindow(POV); else drawEagleHud(POV); }
+  else if (POV.kind === 'eagle') { if (POV.phase === 'chase') drawEagleChase(POV); else if (POV.win) drawEagleWindow(POV); else drawEagleHud(POV); }
+  else if (POV.kind === 'aim') drawAimHud(POV);
   else if (POV.kind === 'orbit' && POV.ground) { hudText('착탄', W / 2, 22, POV.rail ? '#bed2ff' : '#ffe060', 7, 'center'); }
 }
+
+/* ---------------- 지원 무기 1인칭 조준 모드 ----------------
+   스트라타젬 성공 → 몹 시간 정지 → 헬포드에서 무기를 꺼내 장비 → 헬다이버 눈으로 줌인(1인칭)
+   → 화면 가운데 몹에 하이라이트 + 원형 타이머 → 클릭·터치·스페이스로 사격
+   무기마다 방식이 다름: 연발(누르고 있기) · 꾸욱(누르는 동안 발사 / 충전 후 발사) · 한발
+   타이머가 다 돌면 실패: 시간 정지가 풀리고 몹이 다시 다가옴, 같은 코드를 다시 입력해야 함 */
+const AIM_Q = new URLSearchParams(location.search), AIM_ON = AIM_Q.get('aim') !== 'off', AIM_AUTO = AIM_Q.get('aim') === 'auto';
+let AIM = null;
+
+// 무기별 설정 — m: auto 연발 · hold 누르는 동안 · charge 충전 후 발사 · single 한발 / r: 연사 간격·재장전 / d: 피해 / sp·rad: 주변 피해·범위 / ch: 충전 시간 / vm: 손에 든 모양
+function aimSpec(key) {
+  const w = WP[key] || { c: 'gun', n: 8, r: 0.08, snd: 'mg', tr: '#ffd630' }, c = w.c;
+  const S = { w, c, m: 'single', r: 0.5, d: 3, sp: 0, rad: 0, ch: 0, vm: 'rifle' };
+  if (c === 'gun') Object.assign(S, { m: 'auto', r: w.r, d: w.big ? 1 : 0.5, vm: w.spin ? 'minigun' : w.big ? 'hmg' : 'mg' });
+  else if (c === 'snipe') Object.assign(S, { r: 0.5, d: w.heavy ? 4.5 : 3.2, vm: 'rifle' });
+  else if (c === 'cannon') Object.assign(S, { r: 0.22, d: 2.5, sp: 1, rad: 0.9, vm: 'ac' });
+  else if (c === 'rocket') {
+    Object.assign(S, { r: 1.0, d: 10, sp: 6, rad: 1.3, vm: 'tube' });
+    if (key === 'w-spear') Object.assign(S, { m: 'charge', ch: 0.8, d: 12, vm: 'spear' });
+    if (key === 'w-commando') Object.assign(S, { r: 0.3, d: 6, sp: 3, rad: 1.0 });
+    if (key === 'w-airburst') Object.assign(S, { r: 0.8, d: 4, sp: 4, rad: 2.4 });
+    if (key === 'w-wasp') Object.assign(S, { r: 0.7, d: 3, sp: 2, rad: 1.0, vm: 'wasp' });
+    if (key === 'w-rr' || key === 'w-leveller') Object.assign(S, { d: 12, sp: 8, rad: 1.5 });
+  }
+  else if (c === 'silo') Object.assign(S, { r: 2, d: 99, sp: 99, rad: 4.5, vm: 'silo' });
+  else if (c === 'grenade') Object.assign(S, key === 'w-beltgl' ? { m: 'auto', r: 0.16, d: 2, sp: 2, rad: 1.2, vm: 'gl' } : { r: key === 'w-deesc' ? 0.5 : 0.3, d: 2, sp: 2, rad: key === 'w-deesc' ? 1.7 : 1.3, vm: 'gl' });
+  else if (c === 'beam') Object.assign(S, { m: 'hold', d: 6, vm: 'laser' });
+  else if (c === 'quasar') Object.assign(S, { m: 'charge', ch: 1.0, d: 10, sp: 4, rad: 1.3, vm: 'energy' });
+  else if (c === 'rail') Object.assign(S, { m: 'charge', ch: 0.7, d: 10, vm: 'rail' });
+  else if (c === 'plasma') Object.assign(S, { m: 'charge', ch: 0.9, d: 8, sp: 6, rad: 1.6, vm: 'energy' });
+  else if (c === 'nova') Object.assign(S, { m: 'auto', r: 0.13, d: 1.2, vm: 'energy' });
+  else if (c === 'melta') Object.assign(S, { r: 0.45, d: 5, sp: 3, rad: 0.9, vm: 'energy' });
+  else if (c === 'flame' || c === 'gas') Object.assign(S, { m: 'hold', d: c === 'gas' ? 3.5 : w.big ? 5.5 : 4.5, sp: 1, rad: c === 'gas' ? 1.5 : 1.1, vm: c === 'gas' ? 'sprayer' : 'flamer' });
+  else if (c === 'arc') Object.assign(S, { m: 'charge', ch: 0.45, d: 3.5, vm: 'arc' });
+  else if (c === 'harpoon') Object.assign(S, { r: 0.7, d: 5, sp: 2, rad: 0.8, vm: 'harpoon' });
+  else if (c === 'throw') Object.assign(S, { r: 0.9, d: 99, sp: 3, rad: 1.0, vm: 'flag' });
+  else if (c === 'melee') Object.assign(S, { r: 0.7, d: 10, sp: 6, rad: 1.6, vm: 'hammer' });
+  else if (c === 'saw') Object.assign(S, { m: 'auto', r: 0.12, d: 0.9, vm: 'saw' });
+  S.hint = { auto: '누르고 있으면 연발', hold: '꾸욱 누르는 동안 발사', charge: '꾸욱 눌러 충전 · 다 차면 발사', single: '눌러서 한 발' }[S.m];
+  return S;
+}
+
+// 맞힐 대상: 무리는 한 마리씩, 단독은 체력이 큼
+function aimUnits(e) {
+  const D = e.def;
+  if (e.members) return e.members.filter(m => m.alive).map(m => ({ m, hp: 1, max: 1, pos: () => ({ x: e.x + m.dx + e.kx, y: D.h * 0.5, z: ez(e) + m.dz }), h: D.h, w: D.w || 0.8 }));
+  const hp = e.struct ? 6 : D.size === 'heavy' ? (D.stepShake >= 0.15 ? 10 : 8) : 2;
+  return [{ hp, max: hp, pos: () => aimOf(e), h: D.h, w: D.w || 1 }];
+}
+function aimKill(A, u, how = 'fling') {
+  if (u.dead) return; u.dead = true; const e = A.e, p = u.pos();
+  if (A.units.every(q => q.dead)) { killTarget(e, how, e.heavy || e.struct ? 3 : 2); A.done = true; A.doneT = A.t; slowmo(0.55, 0.3); return; }
+  if (u.m) { u.m.alive = false; goreAt(p.x, 0.4, p.z, e.def.gore, 16); launchCorpse(e.def, p.x, 0, p.z, 1.0); if (how === 'burn') flames3(p.x, p.z, 0.3, 0.4); impact(1, p); }
+}
+function aimHurt(A, u, d, how) {
+  if (!u || u.dead || d <= 0 || A.e.dead) return; u.hp -= d; u.hit = 0.12;
+  if (u.m) u.m.flinch = 0.25; else { A.e.flash = 0.05; A.e.flinch = 0.25; }
+  if (u.hp <= 0) aimKill(A, u, how);
+}
+function aimSplash(A, x, z, d, rad, how, skip) { if (d <= 0 || rad <= 0) return; for (const u of A.units) if (!u.dead && u !== skip) { const p = u.pos(); if (Math.hypot(p.x - x, (p.z - z) * 0.8) < rad) aimHurt(A, u, d, how); } }
+
+// 화면 점 → 세계 좌표 (손에 든 무기 총구에서 탄이 나가게)
+function unproj(sx, sy, d) {
+  const lx = (sx - W / 2) * d / VCAM.f, ly = (VCAM.cy - sy) * d / VCAM.f, dz = d * VCAM.cp + ly * VCAM.sp, dy = ly * VCAM.cp - d * VCAM.sp;
+  return { x: VCAM.x + lx * VCAM.cw + dz * VCAM.sw, y: VCAM.y + dy, z: VCAM.z + dz * VCAM.cw - lx * VCAM.sw };
+}
+function aimMuzzleScr(A) { const r = 1 - clamp(A.t / 0.3, 0, 1), sw = Math.sin(A.t * 1.3) * 1.2, tube = ['tube', 'spear', 'wasp'].includes(A.S.vm); return { x: W * (tube ? 0.64 : 0.55) + sw + A.kick * 3, y: H * (tube ? 0.5 : 0.56) + r * r * 80 + A.kick * 5 }; }
+function aimBox(u) {   // 화면에서 몹이 차지하는 칸 (하이라이트 · 클릭 판정)
+  const p = u.pos(), b = proj(p.x, p.y - u.h * 0.5, p.z), t = proj(p.x, p.y + u.h * 0.5, p.z);
+  if (b.zc < 0.6) return null; const hw = Math.max(6, u.w * 0.5 * b.s);
+  return { x: b.x, cy: (b.y + t.y) / 2, x0: b.x - hw, x1: b.x + hw, y0: t.y, y1: b.y, h: Math.max(8, b.y - t.y) };
+}
+function aimNext(A) {   // 쓰러지면 지금 조준 방향과 가장 가까운 몹으로
+  const alive = A.units.map((u, i) => [u, i]).filter(([u]) => !u.dead); if (!alive.length) return;
+  const E = { x: LX + 0.1, z: LZ + 0.1 }; let best = alive[0][1], bd = 1e9;
+  for (const [u, i] of alive) { const p = u.pos(), d = Math.abs(Math.atan2(p.x - E.x, p.z - E.z) - A.yaw); if (d < bd) { bd = d; best = i; } }
+  A.cur = best;
+}
+
+function aimFx(key, e) {
+  const S = aimSpec(key), w = S.w, fx = mkFx(), projs = []; fx.target = e; fx.end = 99; fx.projs = projs; fx.beams = [];
+  const pod = { x: LX + 0.95, z: LZ + 0.55 }, gore = e.def.gore; let podY = 30;
+  const A = { kind: 'aim', fx, e, S, key, units: aimUnits(e), t: 0, dt: 0, live: false, cur: 0, yaw: 0, pitch: 0, kick: 0, held: false, edge: false, charge: 0, cd: 0, acc: 0, timer: 0,
+    done: false, fail: false, hideLouis: true, ground: true, name: (STRATS.find(s => s.k === key) || {}).n || '', tick: 0, snd: 0 };
+  A.T = clamp(4 + 0.6 * (A.units.length - 1) + (e.heavy ? 1 : 0), 4, 9);
+  // 헬포드 낙하 → 쾅 → 무기 꺼냄 → 헬포드는 땅속으로
+  sfx.podFall(0.3);
+  fx.at(0.3, () => { podY = 0; sfx.slam(0.85); stopFor(0.1, true); addShake(0.5, 0, 4); flash(0.4); dust3(pod.x, pod.z, 12, 0.5); decals.push({ kind: 'ring', x: pod.x, z: pod.z, r: 0.2, grow: 4, life: 0, max: 0.4 }); });
+  fx.at(0.45, () => { G.armed = w.c; GUN.hatch(); });
+  fx.at(0.62, () => { dust3(pod.x, pod.z, 8, 0.35); GUN.hiss(); });
+  // 장비하며 헬다이버 쪽으로 당김 → 눈으로 들어가 1인칭
+  fx.at(0.62, () => { const l = proj(LX, 1.4, LZ); camAt(l.x, l.y, 2.6); nz({ type: 'bandpass', f: 600, f2: 2400, d: 0.35, v: 0.14 }); });
+  fx.at(0.92, () => {
+    AIM = A; A.cam = aimCam; enterPOV(A); A.yaw = 0;
+    osc({ f: 260, f2: 55, d: 0.6, v: 0.18, type: 'sine' }); nz({ type: 'lowpass', f: 900, f2: 200, d: 0.5, v: 0.12 });   // 시간 정지 '우웅'
+  });
+  const fire = () => {
+    const u = A.units[A.cur]; if (!u || u.dead) return;
+    const tp = u.pos(), ms = aimMuzzleScr(A), m = unproj(ms.x, ms.y, 1.0), c = S.c; A.kick = 1;
+    const jit = (k = 0.12) => ({ x: tp.x + rand(-k, k), y: tp.y + rand(-k, k), z: tp.z });
+    const shell = (kind, dur, arc, onHit, extra = {}) => projs.push(mkProj(Object.assign({ kind, x0: m.x, y0: m.y, z0: m.z, x1: tp.x, y1: tp.y, z1: tp.z, dur, arc, onHit }, extra)));
+    if (c === 'gun') { GUN[w.snd](); tracer3(m, jit(), w.tr, w.big ? 0.09 : 0.07); sparks3(tp.x, tp.y, tp.z - 0.2, w.big ? 6 : 3, gore, 4); aimHurt(A, u, S.d, 'fling'); addShake(w.big ? 0.06 : 0.03, -1, 0); }
+    else if (c === 'snipe') { GUN[w.snd](); fx.beams.push({ k: 'snipe', t: 0, d: 0.08, to: tp }); sparks3(tp.x, tp.y, tp.z - 0.2, 18, ['#ffffff', '#fff096', ...gore], 6); addShake(0.25, -3, 0); aimHurt(A, u, S.d, 'fling'); }
+    else if (c === 'cannon') { GUN.ac(); addShake(0.12, -1, 0); shell('shell', 0.1, 0, () => { boom3(tp.x, tp.z, 0.55, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'rocket') {
+      GUN[w.snd](); addShake(w.back ? 0.3 : 0.15, -2, 0); P3({ x: m.x, y: m.y, z: m.z - 0.6, vx: rand(-0.5, 0.5), vy: 0.3, vz: -2, drag: 2, kind: 'smoke', max: 0.7, r: 0.3 });
+      if (key === 'w-wasp') { const al = A.units.filter(q => !q.dead); for (let i = 0; i < 5; i++) { const q = al[i % al.length], qp = q.pos(); projs.push(mkProj({ kind: 'mini', x0: m.x, y0: m.y, z0: m.z, x1: qp.x + rand(-0.2, 0.2), y1: qp.y, z1: qp.z, dur: rand(0.35, 0.5), arc: rand(0.5, 1.5), trail: 'smoke', at: i * 0.05, onHit: p => { boom3(p.x, p.z, 0.5, { y: Math.max(0, p.y - 0.4), quiet: true }); aimHurt(A, q, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', q); } })); } }
+      else shell(key === 'w-spear' ? 'missile' : 'rocket', key === 'w-spear' ? 0.55 : 0.28, key === 'w-spear' ? 2.5 : 0, p => {
+        if (key === 'w-airburst') { boom3(p.x, p.z, 0.7, { y: p.y, noSmoke: true, quiet: true }); GUN.flakPop(); for (let j = 0; j < 20; j++) P3({ x: p.x, y: p.y, z: p.z, vx: rand(-3, 3), vy: rand(-9, -4), vz: rand(-1.5, 1.5), kind: 'tracer', max: 0.3, col: '#ffd630' }); }
+        else { boom3(p.x, p.z, w.size || 1.2, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); if (w.napalm) flames3(p.x, p.z, 1.0, 1.3); }
+        aimHurt(A, u, S.d, w.napalm ? 'burn' : 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, w.napalm ? 'burn' : 'fling', u); addShake(0.3, 0, 3);
+      }, { trail: 'smoke' });
+    }
+    else if (c === 'silo') { GUN.siloAlarm(); A.cd = 99; fx.at(fx.t + 0.5, () => { GUN.silo(); projs.push(mkProj({ kind: 'missile', path: 'silo', x0: pod.x, y0: 1.5, z0: pod.z, x1: tp.x, y1: 0.3, z1: tp.z, dur: 1.0, trail: 'fire', onHit: () => { boom3(tp.x, tp.z, 3.2); flash(0.6); aimSplash(A, tp.x, tp.z, 99, 6, 'fling'); for (const q of A.units) aimHurt(A, q, 99, 'fling'); } })); }); }
+    else if (c === 'grenade') { GUN[w.snd](); shell('grenade', 0.36, 1.0, p => { if (w.stun) { GUN.stun(); boom3(p.x, p.z, 0.4, { noSmoke: true, quiet: true }); sparks3(p.x, 0.4, p.z, 20, ['#5a78ff', '#bed2ff', '#ffffff'], 5); } else boom3(p.x, p.z, w.size || 0.7, { quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'quasar') { GUN.quasar(); addShake(0.2, -2, 0); shell('bolt', 0.1, 0, p => { boom3(p.x, p.z, 1.3, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'plasma') { GUN.epoch(); addShake(0.25, -2, 0); shell('plasma', 0.24, 0, p => { boom3(p.x, p.z, 1.5, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimHurt(A, u, S.d, 'fling'); aimSplash(A, p.x, p.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'rail') {   // 관통: 조준선 뒤로 겹친 몹까지
+      GUN.rail(); flash(0.4, '#bed2ff'); addShake(0.35, -4, 0); fx.beams.push({ k: 'rail', t: 0, d: 0.14, to: tp }); sparks3(tp.x, tp.y, tp.z - 0.2, 24, ['#ffffff', '#bed2ff', ...gore], 7);
+      const E = { x: VCAM.x, z: VCAM.z }, dx = tp.x - E.x, dz = tp.z - E.z, L = Math.hypot(dx, dz) || 1;
+      for (const q of A.units) if (!q.dead) { const p = q.pos(), rx = p.x - E.x, rz = p.z - E.z, along = (rx * dx + rz * dz) / L, side = Math.abs(rx * dz - rz * dx) / L; if (q === u || (along > L - 0.5 && side < 0.6)) aimHurt(A, q, S.d, 'fling'); }
+    }
+    else if (c === 'nova') { GUN.nova(); fx.beams.push({ k: 'nova', t: 0, d: 0.07, to: tp }); sparks3(tp.x, tp.y, tp.z, 8, ['#ff8c1e', '#fff096']); aimHurt(A, u, S.d, 'burn'); }
+    else if (c === 'melta') { GUN.melta(); fx.beams.push({ k: 'melta', t: 0, d: 0.22, to: tp }); for (let i = 0; i < 6; i++) P3({ x: tp.x + rand(-0.3, 0.3), y: tp.y + rand(-0.3, 0.3), z: tp.z - 0.2, vx: rand(-1, 1), vy: rand(1, 3), kind: 'fire', max: 0.35, r: rand(0.08, 0.18) }); aimHurt(A, u, S.d, 'burn'); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'burn', u); }
+    else if (c === 'arc') {   // 연쇄: 가까운 몹 셋까지 튐
+      GUN.arc(); fx.beams.push({ k: 'arc', t: 0, d: 0.18, to: tp }); sparks3(tp.x, tp.y, tp.z, 16, ['#bed2ff', '#ffffff', '#5a78ff'], 6); aimHurt(A, u, S.d, 'fling');
+      let from = tp; const near = A.units.filter(q => !q.dead && q !== u).map(q => [q, q.pos()]).sort((a, b) => Math.hypot(a[1].x - tp.x, a[1].z - tp.z) - Math.hypot(b[1].x - tp.x, b[1].z - tp.z)).slice(0, 3);
+      for (const [q, p] of near) if (Math.hypot(p.x - tp.x, p.z - tp.z) < 3) { fx.beams.push({ k: 'arc2', t: 0, d: 0.18, from, to: p }); aimHurt(A, q, S.d * 0.7, 'fling'); from = p; }
+    }
+    else if (c === 'harpoon') { GUN.speargun(); shell('harpoon', 0.14, 0, () => { sparks3(tp.x, tp.y, tp.z, 12, gore); aimHurt(A, u, S.d, 'fling'); fx.at(fx.t + 0.18, () => { boom3(tp.x, tp.z, 0.6, { y: Math.max(0, tp.y - u.h * 0.5), quiet: true }); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling'); }); }); }
+    else if (c === 'throw') { GUN.flag(); A.thrown = A.t; shell('flag', 0.35, 1.6, q => { fx.flag = { x: q.x, z: q.z }; sparks3(q.x, 0.5, q.z, 14, gore); aimHurt(A, u, S.d, 'fling'); aimSplash(A, q.x, q.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'melee') { GUN.hammer(); A.swing = A.t; addShake(0.4, 5, 0); fx.at(fx.t + 0.12, () => { for (let j = 0; j < 3; j++) decals.push({ kind: 'ring', x: tp.x, z: tp.z, r: 0.3, grow: 6 + j * 3, life: -j * 0.06, max: 0.45 }); sparks3(tp.x, tp.y, tp.z, 22, ['#ffffff', '#ffd630', '#c4ccd6'], 7); dust3(tp.x, tp.z, 14, 1.2); aimHurt(A, u, S.d, 'fling'); aimSplash(A, tp.x, tp.z, S.sp, S.rad, 'fling', u); }); }
+    else if (c === 'saw') { GUN.defol(); shell('mini', 0.12, 0, () => { sparks3(tp.x, tp.y, tp.z - 0.2, 4, gore, 4); aimHurt(A, u, S.d, 'fling'); }); }
+  };
+  const holdFx = dt => {   // 레이저 · 화염 · 독가스: 누르는 동안 계속
+    const u = A.units[A.cur]; if (!u || u.dead) return; const tp = u.pos(), ms = aimMuzzleScr(A), m = unproj(ms.x, ms.y, 1.0), c = S.c;
+    A.snd -= dt; if (A.snd <= 0) { A.snd = c === 'beam' ? 0.6 : 0.5; (c === 'beam' ? GUN.lasBeam : GUN[w.snd])(); }
+    if (c === 'beam') { fx.beams.push({ k: 'las', t: 0, d: 0.03, to: tp }); if (Math.random() < 0.6) P3({ x: tp.x + rand(-0.1, 0.1), y: tp.y, z: tp.z - 0.2, vx: rand(-0.5, 0.5), vy: rand(0.5, 2), kind: 'fire', max: 0.3, r: rand(0.05, 0.12) }); }
+    else for (let i = 0; i < (w.big ? 4 : 3); i++) { const dur = 0.2, ex = tp.x + rand(-0.4, 0.4), ey = rand(0.1, tp.y + 0.3), ezz = tp.z + rand(-0.3, 0.3), q = 0.55;   // 입자는 목표 가까이에서 (눈앞에서 크게 번지지 않게)
+      const m0 = { x: lerp(m.x, tp.x, q), y: lerp(m.y, tp.y, q), z: lerp(m.z, tp.z, q) }; A.jet = c;
+      if (c === 'gas') P3({ x: m0.x, y: m0.y, z: m0.z, vx: (ex - m0.x) / dur, vy: (ey - m0.y) / dur, vz: (ezz - m0.z) / dur, kind: 'cloud', max: dur + 0.25, r: rand(0.08, 0.2), col: pick(['#78be3c', '#b4e66e']) });
+      else P3({ x: m0.x, y: m0.y, z: m0.z, vx: (ex - m0.x) / dur, vy: (ey - m0.y) / dur, vz: (ezz - m0.z) / dur, kind: 'fire', max: dur + 0.1, r: rand(0.08, w.big ? 0.28 : 0.2) }); }
+    const how = c === 'gas' ? 'melt' : c === 'beam' ? 'burn' : 'burn';
+    aimHurt(A, u, S.d * dt, how); aimSplash(A, tp.x, tp.z, S.d * S.sp * dt, S.rad, how, u); A.kick = Math.max(A.kick, 0.25);
+  };
+  const failNow = () => {   // 시간 초과: 시간 정지가 풀리고 몹이 다시 다가옴, 같은 코드를 다시
+    A.fail = true; A.failT = A.t; sfx.bad(); flash(0.35, '#ff3030'); addShake(0.3, 0, 3);
+    fx.at(fx.t + 0.75, () => {
+      if (POV === A) exitPOV(); AIM = null; G.armed = null; fx.target = null; fx.end = 0;
+      if (e.dead) return;
+      e.frozen = false; const i = G.targets.indexOf(e); if (i >= 0) G.targets.splice(i, 1);
+      G.enemy = e; G.idx = Math.max(0, G.idx - 1); G.prog = 0; G.kills = Math.max(0, G.kills - 1); G.perfect = false; G.miss++; G.score = Math.max(0, G.score - (e.pts || 0));
+      lastHud = ''; hud();
+    });
+  };
+  fx.tick = dt => {
+    if (fx.t < 0.3) podY = 30 * (1 - fx.t / 0.3);
+    for (const p of projs) stepProj(p, dt);
+    for (const b of fx.beams) b.t += dt; for (let i = fx.beams.length - 1; i >= 0; i--) if (fx.beams[i].t > fx.beams[i].d + 0.05) fx.beams.splice(i, 1);
+    for (const u of A.units) if (u.hit > 0) u.hit -= dt;
+    A.kick = Math.max(0, A.kick - dt * 8); A.dt = dt;
+    if (POV !== A) return;
+    A.live = A.t > 0.32 && !A.done && !A.fail;
+    if (A.done) { if (A.t > A.doneT + 0.7 && !A.left) { A.left = true; const bonus = Math.round(Math.max(0, A.T - A.timer) * 10); G.score += bonus; A.bonus = bonus; lastHud = ''; hud(); flash(0.35, '#ffffff'); exitPOV(); AIM = null; fx.end = fx.t + 0.5; fx.at(fx.t + 0.4, () => { G.armed = null; }); } return; }
+    if (!A.live) return;
+    if (A.units[A.cur] && A.units[A.cur].dead) aimNext(A);
+    A.timer += dt; const left = A.T - A.timer;
+    A.tick -= dt; if (A.tick <= 0) { A.tick = left < 1.5 ? 0.25 : 1; osc({ f: left < 1.5 ? 1500 : 1100, d: 0.03, v: left < 1.5 ? 0.07 : 0.04, type: 'square' }); }
+    if (left <= 0) { failNow(); return; }
+    A.cd -= dt; const pressed = A.edge; A.edge = false; const held = A.held || AIM_AUTO;
+    if (S.m === 'single') { if ((pressed || (AIM_AUTO && held)) && A.cd <= 0) { fire(); if (A.cd < 99) A.cd = S.r; } }
+    else if (S.m === 'auto') { if (held && A.cd <= 0) { fire(); A.cd = S.r; } }
+    else if (S.m === 'hold') { A.firing = held; if (held) holdFx(dt); }
+    else if (S.m === 'charge') {
+      if (held && A.cd <= 0) { if (A.charge === 0) (S.c === 'quasar' ? GUN.quasarCharge : S.c === 'rail' ? GUN.railCharge : S.c === 'plasma' ? GUN.epochCharge : S.c === 'rocket' ? GUN.spearLock : () => osc({ f: 300, f2: 1200, d: S.ch, v: 0.05, type: 'sawtooth' }))(); A.charge += dt; if (A.charge >= S.ch) { fire(); A.charge = 0; A.cd = 0.25; } }
+      else if (!held) { if (A.charge > 0.08) osc({ f: 500, f2: 150, d: 0.15, v: 0.05, type: 'square' }); A.charge = 0; }
+    }
+  };
+  fx.drawers.push(() => {   // 헬포드 (내려준 뒤 땅속으로)
+    const sk = clamp((fx.t - 0.62) / 0.28, 0, 1); if (sk < 1) drawObj(SPR_POD, pod.x, Math.max(0, podY), pod.z, 0.065, { sy: 1 - sk * sk, sx: 1 + sk * 0.15 });
+    if (fx.flag) { const q = proj(fx.flag.x, 0, fx.flag.z), u = Math.min(q.s, 80); rect(q.x, q.y - u * 0.9, 1, u * 0.9, '#c4ccd6'); rect(q.x + 1, q.y - u * 0.9, u * 0.45, u * 0.3, '#ffe710'); }
+  });
+  fx.drawers2 = () => {   // 빔 (손에 든 무기 총구 → 목표)
+    if (POV !== A) return; const ms = aimMuzzleScr(A);
+    if (A.firing && (S.c === 'flame' || S.c === 'gas')) {   // 불줄기 · 독가스 줄기: 총구에서 목표까지 화면 위에 그림
+      const u = A.units[A.cur]; if (u && !u.dead) { const p = u.pos(), a = proj(p.x, p.y, p.z), dx = a.x - ms.x, dy = a.y - ms.y, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+        const cols = S.c === 'gas' ? ['#5a9a2a', '#78be3c', '#b4e66e'] : ['#e23e1c', '#ff8c1e', '#ffd630', '#fff4c0'];
+        for (let j = 0; j < cols.length; j++) { const wv = (1 - j / cols.length) * (10 + Math.sin(A.t * 37 + j) * 2), pts = [];
+          for (let i = 0; i <= 8; i++) { const k = i / 8, wob = Math.sin(A.t * 30 + i * 1.7 + j) * 2 * k, ww = (1 + k * 1.6) * wv * 0.5; pts.push([ms.x + dx * k + nx * (ww + wob), ms.y + dy * k + ny * (ww + wob)]); }
+          for (let i = 8; i >= 0; i--) { const k = i / 8, wob = Math.sin(A.t * 30 + i * 1.7 + j) * 2 * k, ww = (1 + k * 1.6) * wv * 0.5; pts.push([ms.x + dx * k - nx * (ww - wob), ms.y + dy * k - ny * (ww - wob)]); }
+          ctx.globalAlpha = 0.55 + j * 0.1; poly(pts, cols[j]); }
+        ctx.globalAlpha = 1; glow(a.x, a.y, 16, cols[cols.length - 1], 0.6); light(ms.x, ms.y, 90, S.c === 'gas' ? '#9aff6a' : '#ff8a30', 0.7); } }
+    for (const b of fx.beams) {
+      if (b.t >= b.d) continue; const a = proj(b.to.x, b.to.y, b.to.z); if (a.zc < 0.6) continue;
+      const s0 = b.from ? proj(b.from.x, b.from.y, b.from.z) : ms;
+      if (b.k === 'snipe') { line(s0.x, s0.y, a.x, a.y, '#fff096', 2); glowLine(s0.x, s0.y, a.x, a.y, '#fff096', 0.6); }
+      else if (b.k === 'rail') { line(s0.x, s0.y - 2, a.x, a.y - 1, '#bed2ff', 2); line(s0.x, s0.y, a.x, a.y, '#ffffff', 3); line(s0.x, s0.y + 2, a.x, a.y + 1, '#bed2ff', 2); glowLine(s0.x, s0.y, a.x, a.y, '#bed2ff', 1); }
+      else if (b.k === 'las') { line(s0.x, s0.y, a.x, a.y, '#e23e1c', 3); line(s0.x, s0.y, a.x, a.y, '#fff096', 1.5); glowLine(s0.x, s0.y, a.x, a.y, '#ff6a2a', 1); circ(a.x, a.y, 3 + Math.random() * 3, '#ff8c1e'); }
+      else if (b.k === 'nova') { line(s0.x, s0.y, a.x, a.y, '#ff8c1e', 2); glowLine(s0.x, s0.y, a.x, a.y, '#ffb060', 0.6); }
+      else if (b.k === 'melta') { for (let i = 0; i < 7; i++) line(s0.x, s0.y, a.x + rand(-6, 6), a.y + rand(-8, 8), pick(['#fff096', '#ffd630', '#ff8c1e', '#ffffff']), 2); }
+      else if (b.k === 'arc' || b.k === 'arc2') { let x = s0.x, y = s0.y; for (let i = 1; i <= 9; i++) { const nx = s0.x + (a.x - s0.x) * i / 9, ny = s0.y + (a.y - s0.y) * i / 9 + (i < 9 ? rand(-7, 7) : 0); line(x, y, nx, ny, i % 2 ? '#ffffff' : '#bed2ff', 2); x = nx; y = ny; } glow(a.x, a.y, 8, '#bed2ff', 0.8); }
+    }
+  };
+  fx.zf = () => pod.z;
+  return fx;
+}
+
+// 카메라: 머리 뒤에서 눈으로 들어간 뒤, 지금 노리는 몹을 화면 가운데에 둠 (조준경 배율은 거리에 따라)
+function aimCam(P) {
+  const E = { x: LX + 0.1, y: 1.62, z: LZ + 0.1 }, u = P.units[P.cur], tp = u && !u.dead ? u.pos() : (P.lastTp || centerOf(P.e)); P.lastTp = tp;
+  const dx = tp.x - E.x, dz = tp.z - E.z, dist = Math.hypot(dx, dz) || 1, yawT = Math.atan2(dx, dz), pitchT = Math.atan2(E.y - tp.y, dist);
+  const k = P.t < 0.02 ? 1 : 1 - Math.exp(-(P.dt || 0.016) * 10); P.yaw = lerp(P.yaw, yawT, k); P.pitch = lerp(P.pitch || pitchT, pitchT, k);
+  const dol = clamp(P.t / 0.32, 0, 1), ds = dol * dol * (3 - 2 * dol), back = (1 - ds) * 1.5, up = (1 - ds) * 0.4;
+  const fT = FOCAL * clamp(dist / 3.6, 1.5, 3.6), sx = Math.sin(P.yaw), cz = Math.cos(P.yaw);
+  setVC({ on: true, x: E.x - sx * back, y: E.y + up, z: E.z - cz * back, yaw: P.yaw + Math.sin(P.t * 1.3) * 0.004, pitch: P.pitch + Math.cos(P.t * 1.1) * 0.003 - P.kick * 0.012, cy: H * 0.5, f: lerp(FOCAL, fT, ds) });
+}
+
+// 손에 든 무기 (화면 오른쪽 아래, 반동·숨 흔들림) — 총구에서 손잡이 쪽으로 원근감 있게 굵어짐
+function vmFrame(A, ms, B) {
+  const D = { x: B.x - ms.x, y: B.y - ms.y }, L = Math.hypot(D.x, D.y), nx = D.y / L, ny = -D.x / L;
+  const P = (u, v) => { const k = (0.55 + 0.9 * u) * 1.35; return [ms.x + D.x * u + nx * v * k, ms.y + D.y * u + ny * v * k]; };
+  const band = (u0, u1, a0, a1, col) => poly([P(u0, a0), P(u1, a0), P(u1, a1), P(u0, a1)], col);
+  return { P, band };
+}
+function drawAimVM(A) {
+  const S = A.S, vm = S.vm, t = A.t, ms = aimMuzzleScr(A), K = A.kick;
+  const D = '#191b21', M = '#2c3039', L2 = '#5a6270', L3 = '#8a94a0', Y = '#ffd630', GL = '#24221d';
+  const fl = K > 0.6 && !['laser', 'flamer', 'sprayer', 'flag', 'hammer', 'silo'].includes(vm);
+  if (vm === 'tube' || vm === 'spear' || vm === 'wasp') {   // 어깨에 멘 발사관
+    const { P, band } = vmFrame(A, ms, { x: W + 50 + K * 8, y: H * 0.7 + K * 6 });
+    band(0, 1.1, -22, 22, M); band(0, 1.1, 12, 22, L2); band(0, 1.1, -22, -16, D);
+    band(0.18, 0.22, -23, 23, Y); band(0.62, 0.66, -23, 23, Y);
+    const f0 = P(0, 0); circ(f0[0], f0[1], 13, L3); circ(f0[0], f0[1], 10.5, '#07080d');
+    if (vm === 'wasp') for (let i = 0; i < 4; i++) circ(f0[0] + (i % 2 ? 4.5 : -4.5), f0[1] + (i < 2 ? -4.5 : 4.5), 3.2, '#2a2e36');
+    const s0 = P(0.35, 26), s1 = P(0.5, 26), s2 = P(0.5, 40), s3 = P(0.35, 40); poly([s0, s1, s2, s3], D);   // 조준기
+    const sc = P(0.42, 33); rect(sc[0] - 5, sc[1] - 4, 10, 8, vm === 'spear' ? (A.charge > 0 ? (((t * 12) | 0) % 2 ? '#ff3a2a' : '#5a1010') : '#2a5a3a') : '#3a4a5a');
+    if (vm === 'spear' && A.charge > 0) hudText('LOCK', sc[0], sc[1] - 7, '#ff3a2a', 4, 'center');
+    const g = P(0.55, -30); poly([P(0.5, -20), P(0.6, -20), P(0.62, -42), P(0.52, -42)], D); circ(g[0], g[1], 11, GL);   // 손잡이 + 손
+    if (fl) { glow(f0[0], f0[1], 34, '#ffc060', 1); circ(f0[0], f0[1], 9, '#fff4c0'); }
+    return;
+  }
+  if (vm === 'silo') { poly([[W - 120, H], [W - 104, H - 76], [W - 18, H - 86], [W - 2, H]], D); rect(W - 100, H - 72, 72, 44, '#0a1418'); hudText(A.cd > 50 ? '발사됨' : '목표 지정', W - 64, H - 46, A.cd > 50 ? '#ff6a2a' : '#7dffb4', 5, 'center'); rect(W - 76, H - 34, 24, 6, Y); circ(W - 30, H - 20, 12, GL); return; }
+  if (vm === 'flag') { const sw = A.thrown ? clamp((t - A.thrown) / 0.3, 0, 1) : 0; if (sw >= 1) return; const x = W - 80 + sw * 60, y = H - 160 - sw * 40; line(x, y, W - 30, H + 10, '#c4ccd6', 4); poly([[x, y], [x + 48, y + 6], [x + 46, y + 34], [x, y + 30]], '#ffe710'); circ(x + 23, y + 18, 6, '#1c1e26'); circ(W - 52, H - 34, 11, GL); return; }
+  if (vm === 'hammer') { const sw = A.swing != null ? clamp((t - A.swing) / 0.25, 0, 1) : 1, a = sw < 1 ? Math.sin(sw * Math.PI) : 0, hx = W - 74 - a * 60, hy = H - 96 + a * 52;
+    line(hx + 10, hy + 20, W + 10, H + 20, '#3a2a1a', 7); poly([[hx - 30, hy - 20], [hx + 32, hy - 13], [hx + 30, hy + 22], [hx - 32, hy + 15]], M); poly([[hx - 30, hy - 20], [hx + 32, hy - 13], [hx + 32, hy - 8], [hx - 30, hy - 15]], L3); rect(hx - 6, hy - 15, 10, 32, Y); circ(W - 30, H - 20, 12, GL); return; }
+  const { P, band } = vmFrame(A, ms, { x: W + 14 + K * 7, y: H + 26 + K * 9 });
+  const big = vm === 'hmg' || vm === 'minigun' || vm === 'ac' || vm === 'gl', sci = vm === 'laser' || vm === 'energy' || vm === 'rail' || vm === 'arc';
+  const bw = vm === 'rifle' ? 2.6 : big ? 4.5 : 3.4, bl = vm === 'rifle' ? 0.34 : vm === 'gl' ? 0.14 : 0.26;
+  // 몸통 · 개머리
+  band(0.5, 1.08, -17, 14, D); band(0.5, 1.08, 9, 14, L2); band(0.5, 1.08, -17, -13, '#0e0f13'); band(0.74, 0.78, -17, 14, Y);
+  // 손잡이 덮개 (총열 덮개)
+  const gw = big ? 11 : 9;
+  if (sci) { band(0.12, 0.52, -gw, gw, '#22262e'); const col = vm === 'rail' ? '#bed2ff' : vm === 'arc' ? '#9ab0ff' : vm === 'laser' ? '#ff6a2a' : '#5ac4ff', ch = S.ch ? A.charge / S.ch : A.firing ? 1 : 0.25;
+    for (let i = 0; i < 4; i++) { band(0.16 + i * 0.09, 0.2 + i * 0.09, -gw - 1, gw + 1, M); const c0 = P(0.18 + i * 0.09, gw + 1); glow(c0[0], c0[1], 3 + ch * 5, col, 0.4 + ch * 0.6); }
+    if (vm === 'rail') { band(0, 0.14, 3, 6, L3); band(0, 0.14, -6, -3, L3); } const m0 = P(0, 0); glow(m0[0], m0[1], 3 + ch * 12, col, 0.4 + ch * 0.6); }
+  else if (vm === 'flamer' || vm === 'sprayer') { band(0.05, 0.5, -6, 6, M); band(0.05, 0.5, 3, 6, L2); const tk = vm === 'sprayer' ? '#3a5a2a' : '#5a2a1a'; poly([P(0.32, -8), P(0.52, -8), P(0.54, -40), P(0.34, -40)], tk); band(0.36, 0.4, -40, -8, Y); const m0 = P(0, 0); circ(m0[0], m0[1], 4, '#14120f'); glow(m0[0], m0[1], 4 + Math.sin(t * 40), vm === 'sprayer' ? '#9aff6a' : '#5ab0ff', 0.9); }
+  else { band(bl - 0.02, 0.52, -gw, gw, M); band(bl - 0.02, 0.52, gw - 3, gw, L2);
+    if (vm === 'hmg' || vm === 'mg') for (let i = 0; i < 4; i++) band(bl + 0.02 + i * 0.05, bl + 0.04 + i * 0.05, -2.5, 2.5, '#0e0f13');
+    band(0, bl, -bw, bw, '#2a2e36'); band(0, bl, bw * 0.4, bw, L3); }
+  if (vm === 'minigun') { for (let i = 0; i < 3; i++) { const o = (((t * 30 * (A.held || AIM_AUTO ? 1 : 0.08)) + i / 3) % 1) * 7 - 3.5; band(0, 0.3, o - 1, o + 1, L3); } band(-0.01, 0.03, -6, 6, M); }
+  if (vm === 'ac') { band(-0.03, 0.05, -7, 7, M); band(0.0, 0.02, -7, 7, '#0e0f13'); }
+  if (vm === 'gl') { const dc = P(0.46, -22); circ(dc[0], dc[1], 16, D); circ(dc[0], dc[1], 10, M); circ(dc[0], dc[1], 3, L3); }
+  if (vm === 'mg' || vm === 'hmg') poly([P(0.56, -15), P(0.68, -15), P(0.7, -46), P(0.58, -46)], D);   // 탄통
+  if (vm === 'rifle') { band(0.52, 0.82, 16, 24, D); const sc = P(0.56, 20); circ(sc[0], sc[1], 5, '#2a3a4a'); circ(sc[0], sc[1], 2.5, '#5a8ab0'); poly([P(0.62, -15), P(0.7, -15), P(0.71, -36), P(0.63, -36)], D); }
+  else if (!sci && vm !== 'flamer' && vm !== 'sprayer') band(0.58, 0.68, 14, 19, '#0e0f13');   // 가늠자
+  if (vm === 'harpoon') { const m0 = P(0, 0); poly([[m0[0] - 6, m0[1] + 2], [m0[0] - 1, m0[1] - 10], [m0[0] + 4, m0[1] + 1]], '#c4ccd6'); }
+  if (vm === 'saw') { const m0 = P(0, 0), r0 = 12; circ(m0[0], m0[1], r0, '#8a94a0'); circ(m0[0], m0[1], 4, D); for (let i = 0; i < 8; i++) { const a = t * 30 + i * 0.785; rect(m0[0] + Math.cos(a) * r0 - 1, m0[1] + Math.sin(a) * r0 - 1, 2, 2, '#ffffff'); } }
+  const h = P(0.42, -12); circ(h[0], h[1], 10, GL); circ(h[0] - 2, h[1] - 3, 4, '#3a382f');   // 손 (장갑)
+  if (fl) { const m0 = P(0, 0); glow(m0[0], m0[1], big ? 26 : 18, '#ffc060', 1); circ(m0[0], m0[1], big ? 7 : 5, '#fff4c0'); }
+}
+// 조준 화면: 시간 정지 테두리 · 하이라이트 · 원형 타이머 · 충전 표시 · 안내
+function drawAimHud(A) {
+  const t = A.t, S = A.S, G2 = '#7dffb4';
+  { const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.65); g.addColorStop(0, 'rgba(10,30,60,0)'); g.addColorStop(1, 'rgba(10,30,60,0.55)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+  drawAimVM(A);
+  const left = Math.max(0, A.T - A.timer), fr = clamp(left / A.T, 0, 1);
+  hudText('◷ 시간 정지', 10, 16, '#9ad8ff', 5); hudText('남은 적 ' + A.units.filter(u => !u.dead).length, 10, 23, '#c8d8e8', 4);
+  hudText(A.name, 10, H - 18, '#ffe060', 5); hudText(S.hint + ' · 클릭·터치·스페이스', 10, H - 11, '#c8d8e8', 4);
+  // 다른 몹: 옅은 표시
+  for (const u of A.units) if (!u.dead && u !== A.units[A.cur]) { const b = aimBox(u); if (b) bracket(b.x, b.cy, (b.x1 - b.x0) * 1.2, b.h * 1.1, 'rgba(255,224,96,0.35)', 3); }
+  const u = A.units[A.cur], b = u && !u.dead ? aimBox(u) : null;
+  if (b && !A.fail && !A.done) {
+    const pul = 0.6 + Math.sin(t * 10) * 0.4, R = clamp(b.h * 0.62, 14, 70), col = fr > 0.5 ? '#7dffb4' : fr > 0.25 ? '#ffe060' : '#ff3a2a';
+    bracket(b.x, b.cy, (b.x1 - b.x0) * 1.25, b.h * 1.15, '#ffe060', 5);   // 하이라이트
+    ctx.globalAlpha = 0.25 * pul; circ(b.x, b.cy, R + 3, '#ffe060'); ctx.globalAlpha = 1;
+    ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(b.x, b.cy, R, 0, Math.PI * 2); ctx.stroke();   // 원형 타이머
+    ctx.strokeStyle = col; ctx.lineWidth = fr < 0.25 && ((t * 8) | 0) % 2 ? 3 : 2; ctx.beginPath(); ctx.arc(b.x, b.cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fr); ctx.stroke();
+    glow(b.x, b.cy - R, 3, col, 0.8);
+    if (S.m === 'charge' && A.charge > 0) { ctx.strokeStyle = '#5ac4ff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(b.x, b.cy, R - 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(A.charge / S.ch, 0, 1)); ctx.stroke(); }
+    if (u.max > 1) { const hw = 22; rect(b.x - hw, b.y1 + 4, hw * 2, 2, '#2a0a0a'); rect(b.x - hw, b.y1 + 4, hw * 2 * clamp(u.hp / u.max, 0, 1), 2, '#ff3a2a'); }
+    if (t < 1.6 && ((t * 4) | 0) % 2 === 0) hudText(AIM_AUTO ? 'AUTO' : '클릭!', b.x, b.y0 - 6, '#ffe060', 5, 'center');
+    hudText(left.toFixed(1), b.x + R + 4, b.cy + 2, col, 5);
+  }
+  // 조준점
+  line(W / 2 - 6, H / 2, W / 2 - 2, H / 2, '#ffffff', 1); line(W / 2 + 2, H / 2, W / 2 + 6, H / 2, '#ffffff', 1); line(W / 2, H / 2 - 6, W / 2, H / 2 - 2, '#ffffff', 1); line(W / 2, H / 2 + 2, W / 2, H / 2 + 6, '#ffffff', 1);
+  if (A.fail) hudText('시간 초과', W / 2, H / 2 - 30, '#ff3a2a', 9, 'center');
+  if (A.done) hudText('처치', W / 2, H / 2 - 30, '#ffe060', 9, 'center');
+}
+
+// 입력: 클릭·터치(다른 몹을 누르면 그 몹으로 조준 이동) · 스페이스
+function aimDown(x, y) {
+  const A = AIM; if (!A || POV !== A || A.done || A.fail) return;
+  if (x != null) for (let i = 0; i < A.units.length; i++) { const u = A.units[i]; if (u.dead || i === A.cur) continue; const b = aimBox(u); if (b && x > b.x0 - 4 && x < b.x1 + 4 && y > b.y0 - 4 && y < b.y1 + 4) { A.cur = i; break; } }
+  A.held = true; A.edge = true;
+}
+function aimUp() { if (AIM) AIM.held = false; }
+window.addEventListener('pointerdown', ev => {
+  if (!AIM || POV !== AIM) return; if (ev.target.closest && ev.target.closest('#pad, button, .rec, a')) return;
+  const r = cv.getBoundingClientRect(); aimDown((ev.clientX - r.left) / r.width * W, (ev.clientY - r.top) / r.height * H);
+});
+window.addEventListener('pointerup', aimUp); window.addEventListener('pointercancel', aimUp);
+window.addEventListener('keydown', ev => { if (ev.code === 'Space' && AIM && POV === AIM) { ev.preventDefault(); if (!ev.repeat) aimDown(); } });
+window.addEventListener('keyup', ev => { if (ev.code === 'Space') aimUp(); });
 
 /* ---------------- 루이스 (뒷모습) ---------------- */
 const SPR_LOUIS = spr3d('diver')[0];   // 3D로 구운 헬다이버 뒷모습
@@ -2439,6 +2780,7 @@ function launch(s, e) {
   const k = s.k, kd = kindOf(k);
   if (kd === 'orbital') return orbitalFx(e, k);
   if (kd === 'eagle') return eagleFx(e, k);
+  if (kd === 'weapon' && AIM_ON) return aimFx(k, e);   // 지원 무기: 1인칭 조준 모드
   if (kd === 'weapon' || kd === 'sentry') return weaponFx(k, e);
   if (kd === 'vehicle') return vehicleFx(k, e);
   if (kd === 'drone') return droneFx(k, e);
@@ -2446,7 +2788,7 @@ function launch(s, e) {
 }
 function success(s) {
   const e = G.enemy; e.frozen = true;
-  G.score += 10 + Math.round(clamp(1 - e.p, 0, 1) * 50) + (e.heavy ? 40 : 0) + (e.members ? 6 * e.members.length : 0) + (e.struct ? 60 : 0);
+  e.pts = 10 + Math.round(clamp(1 - e.p, 0, 1) * 50) + (e.heavy ? 40 : 0) + (e.members ? 6 * e.members.length : 0) + (e.struct ? 60 : 0); G.score += e.pts;
   if (e.struct && e.walker.alive) {   // 건물에서 나온 잡몹은 루이스가 직접 쏨
     e.walker.alive = false; const wz = walkerZ(e), wd = e.walker.def;
     GUN.stalwart(); setTimeout(() => GUN.stalwart(), 70); setTimeout(() => GUN.stalwart(), 140);
@@ -2639,7 +2981,7 @@ function fit() {
 document.body.classList.add('front'); $('wrap').appendChild($('top'));   // 정면판: 화살표 판은 오른쪽 아래, 라운드·점수는 위
 window.addEventListener('resize', fit);
 fit(); overlay(); requestAnimationFrame(frame);
-window.__hero = { G, press, STRATS, recordCode, makeEnemy, EN, spawnEnemy, setFaction };
+window.__hero = { G, press, STRATS, recordCode, makeEnemy, EN, spawnEnemy, setFaction, success };
 // 디스코드 게임 창(액티비티) 안에서 열렸을 때만 연결
 (async () => {
   const q = new URLSearchParams(location.search);
